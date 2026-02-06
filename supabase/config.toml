@@ -1,0 +1,4 @@
+project_id = "bejbsvyzncpqzcpmzxgg"
+
+[functions.extract-iddas-booking]
+verify_jwt = false
