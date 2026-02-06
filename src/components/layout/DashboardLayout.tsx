@@ -4,6 +4,7 @@ import { AppSidebar } from './AppSidebar';
 import { ProfileMenu } from './ProfileMenu';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useBooking } from '@/contexts/BookingContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Settings, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,6 +22,7 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { companySettings, updateCompanySettings } = useBooking();
+  const { isAdmin } = useAuth();
   const [tempName, setTempName] = useState(companySettings.name);
   const [tempLogo, setTempLogo] = useState(companySettings.logo);
   const [isOpen, setIsOpen] = useState(false);
@@ -37,6 +39,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   };
 
   const handleSave = () => {
+    // Somente admin pode editar (empresas apenas visualizam).
+    if (!isAdmin) {
+      setIsOpen(false);
+      return;
+    }
     updateCompanySettings({ name: tempName, logo: tempLogo });
     setIsOpen(false);
   };
@@ -65,13 +72,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             
             <div className="flex items-center gap-2">
               <ThemeToggle />
-              <Dialog open={isOpen} onOpenChange={setIsOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="ghost" size="icon">
-                    <Settings className="h-5 w-5" />
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
+              {isAdmin ? (
+                <Dialog open={isOpen} onOpenChange={setIsOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="ghost" size="icon">
+                      <Settings className="h-5 w-5" />
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Configurações da Empresa</DialogTitle>
                 </DialogHeader>
@@ -106,8 +114,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                     Salvar Alterações
                   </Button>
                 </div>
-              </DialogContent>
-            </Dialog>
+                  </DialogContent>
+                </Dialog>
+              ) : null}
               
               <ProfileMenu />
             </div>

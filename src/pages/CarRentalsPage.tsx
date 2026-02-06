@@ -5,9 +5,11 @@ import { CarRentalCard } from '@/components/cards/CarRentalCard';
 import { CarRentalForm } from '@/components/forms/CarRentalForm';
 import { Input } from '@/components/ui/input';
 import { Search } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function CarRentalsPage() {
   const { carRentals, deleteCarRental } = useBooking();
+  const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredCarRentals = carRentals.filter(car => {
@@ -27,7 +29,7 @@ export default function CarRentalsPage() {
             <h2 className="text-2xl font-bold text-foreground">Aluguel de Carro</h2>
             <p className="text-muted-foreground">Gerencie todas as reservas de veículos</p>
           </div>
-          <CarRentalForm />
+          {isAdmin ? <CarRentalForm /> : null}
         </div>
 
         {/* Filters */}
@@ -53,7 +55,11 @@ export default function CarRentalsPage() {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {filteredCarRentals.map((car) => (
-              <CarRentalCard key={car.id} carRental={car} onDelete={deleteCarRental} />
+              <CarRentalCard
+                key={car.id}
+                carRental={car}
+                onDelete={isAdmin ? deleteCarRental : undefined}
+              />
             ))}
           </div>
         )}

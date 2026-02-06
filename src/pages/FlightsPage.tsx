@@ -14,7 +14,7 @@ type FlightRow = Flight & { __booking_id: string };
 
 export default function FlightsPage() {
   const { toast } = useToast();
-  const { user, isLoading: isAuthLoading } = useAuth();
+  const { user, isLoading: isAuthLoading, isAdmin } = useAuth();
   const [flights, setFlights] = useState<FlightRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -139,7 +139,7 @@ const filteredFlights = useMemo(() => flights.filter(flight => {
             <h2 className="text-2xl font-bold text-foreground">Voos</h2>
             <p className="text-muted-foreground">Gerencie todas as passagens aéreas</p>
           </div>
-          <FlightForm onSaved={fetchFlights} />
+          {isAdmin ? <FlightForm onSaved={fetchFlights} /> : null}
         </div>
 
         {/* Filters */}
@@ -182,7 +182,11 @@ const filteredFlights = useMemo(() => flights.filter(flight => {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {filteredFlights.map((flight) => (
-              <FlightCard key={flight.id} flight={flight} onDelete={deleteFlight} />
+              <FlightCard
+                key={flight.id}
+                flight={flight}
+                onDelete={isAdmin ? deleteFlight : undefined}
+              />
             ))}
           </div>
         )}

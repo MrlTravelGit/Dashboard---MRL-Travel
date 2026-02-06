@@ -5,9 +5,11 @@ import { HotelCard } from '@/components/cards/HotelCard';
 import { HotelForm } from '@/components/forms/HotelForm';
 import { Input } from '@/components/ui/input';
 import { Search } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function HotelsPage() {
   const { hotels, deleteHotel } = useBooking();
+  const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredHotels = hotels.filter(hotel => {
@@ -26,7 +28,7 @@ export default function HotelsPage() {
             <h2 className="text-2xl font-bold text-foreground">Hospedagens</h2>
             <p className="text-muted-foreground">Gerencie todas as reservas de hotéis</p>
           </div>
-          <HotelForm />
+          {isAdmin ? <HotelForm /> : null}
         </div>
 
         {/* Filters */}
@@ -52,7 +54,11 @@ export default function HotelsPage() {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {filteredHotels.map((hotel) => (
-              <HotelCard key={hotel.id} hotel={hotel} onDelete={deleteHotel} />
+              <HotelCard
+                key={hotel.id}
+                hotel={hotel}
+                onDelete={isAdmin ? deleteHotel : undefined}
+              />
             ))}
           </div>
         )}

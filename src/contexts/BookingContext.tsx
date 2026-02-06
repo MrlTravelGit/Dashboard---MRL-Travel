@@ -223,6 +223,17 @@ export function BookingProvider({ children }: { children: ReactNode }) {
     settings: Partial<CompanySettings>,
     logoFile?: File | null
   ) => {
+    // A partir de agora, empresas/usuários só visualizam.
+    // Somente admin pode alterar nome/logo.
+    if (!isAdmin) {
+      toast({
+        title: "Acesso negado",
+        description: "Somente administradores podem alterar nome e logo da empresa.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     // Atualiza UI primeiro, para feedback imediato
     setCompanySettings((prev) => ({ ...prev, ...settings }));
 
