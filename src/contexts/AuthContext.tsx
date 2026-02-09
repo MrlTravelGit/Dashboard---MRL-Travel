@@ -27,27 +27,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const loadRoleAndCompany = async (userId: string) => {
-    // 1) tenta achar vínculo na company_users
-    // Alguns projetos antigos usavam a coluna "app_role" em vez de "role".
-    const { data, error } = await supabase
+    // Admin global: quem estiver em admin_users é admin do sistema inteiro.
+    const { data: adminRow } = await supabase
+      .from("admin_users")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    const admin = !!adminRow;
+    setIsAdmin(admin);
+    setAppRole(admin ? "admin" : "user");
+
+    // Vínculo do usuário com empresa (para usuários da empresa).
+    const { data: cu } = await supabase
       .from("company_users")
-      .select("company_id, role, app_role")
+      .select("company_id")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
-      setIsAdmin(false);
-      setCompanyId(null);
-      setAppRole(null);
-      return;
-    }
-
-    const role = ((data as any).role ?? (data as any).app_role ?? "user") as AppRole;
-    setCompanyId(data.company_id ?? null);
-    setAppRole(role);
-    setIsAdmin(role === "admin");
+    setCompanyId(cu?.company_id ?? null);
   };
 
   useEffect(() => {

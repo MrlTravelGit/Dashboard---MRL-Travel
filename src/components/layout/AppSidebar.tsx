@@ -19,7 +19,7 @@ const menuItems = [
   { title: 'Hospedagens', url: '/hospedagens', icon: Building2, adminOnly: false },
   { title: 'Aluguel de Carro', url: '/aluguel-carro', icon: Car, adminOnly: false },
   { title: 'Empresas', url: '/empresas', icon: Users, adminOnly: true },
-  { title: 'Funcionários', url: '/funcionarios', icon: UserCheck, adminOnly: false },
+  { title: 'Funcionários', url: '/funcionarios', icon: UserCheck, adminOnly: true },
 ];
 
 export function AppSidebar() {
