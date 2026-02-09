@@ -421,7 +421,9 @@ export function FlightForm({ onSaved }: FlightFormProps) {
           </div>
           <div className="col-span-2">
             <span className="text-muted-foreground">Passageiro:</span>
-            <span className="ml-2 font-medium">{flight.passengerName || passengerFallback || ''}</span>
+            <span className="ml-2 font-medium">
+              {(flight.passengerName || passengerFallback || '').trim() || 'Não informado'}
+            </span>
           </div>
           <div>
             <span className="text-muted-foreground">Voo:</span>
