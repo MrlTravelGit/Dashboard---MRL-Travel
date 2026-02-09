@@ -84,6 +84,15 @@ export default function BookingDetailsPage() {
   const handleSave = async () => {
     if (!id) return;
 
+    if (!isAdmin) {
+      toast({
+        title: "Ação não permitida",
+        description: "Somente o administrador pode editar esta reserva.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     let totalPaid: number | null | undefined = null;
     let totalOriginal: number | null | undefined = null;
 
@@ -235,16 +244,18 @@ export default function BookingDetailsPage() {
 
           {booking?.source_url ? (
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={handleImportFromLink} disabled={importing}>
-                {importing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Importando...
-                  </>
-                ) : (
-                  "Importar do link"
-                )}
-              </Button>
+              {isAdmin ? (
+                <Button variant="outline" onClick={handleImportFromLink} disabled={importing}>
+                  {importing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Importando...
+                    </>
+                  ) : (
+                    "Importar do link"
+                  )}
+                </Button>
+              ) : null}
 
               <Button
                 variant="secondary"
@@ -278,6 +289,7 @@ export default function BookingDetailsPage() {
                   value={form.name}
                   onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
                   placeholder="Ex: Reserva (link salvo)"
+                  disabled={!isAdmin}
                 />
               </div>
 
