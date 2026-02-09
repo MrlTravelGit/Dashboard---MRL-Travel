@@ -28,9 +28,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadRoleAndCompany = async (userId: string) => {
     // 1) tenta achar vínculo na company_users
+    // Alguns projetos antigos usavam a coluna "app_role" em vez de "role".
     const { data, error } = await supabase
       .from("company_users")
-      .select("company_id, role")
+      .select("company_id, role, app_role")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -43,7 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const role = (data.role as AppRole) ?? "user";
+    const role = ((data as any).role ?? (data as any).app_role ?? "user") as AppRole;
     setCompanyId(data.company_id ?? null);
     setAppRole(role);
     setIsAdmin(role === "admin");

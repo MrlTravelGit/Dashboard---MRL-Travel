@@ -53,10 +53,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       <div className="min-h-screen flex w-full bg-background">
         <AppSidebar />
         <div className="flex-1 flex flex-col">
-          <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
+          <header className="h-16 border-b border-border bg-card flex items-center justify-between px-4 sm:px-6">
             <div className="flex items-center gap-4">
               <SidebarTrigger className="text-foreground" />
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 {companySettings.logo ? (
                   <img src={companySettings.logo} alt="Logo" className="h-8 w-8 rounded-md object-cover" />
                 ) : (
@@ -66,7 +66,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                     </span>
                   </div>
                 )}
-                <h1 className="text-lg font-semibold text-foreground">{companySettings.name}</h1>
+                <h1 className="text-lg font-semibold text-foreground truncate max-w-[55vw] sm:max-w-none">{companySettings.name}</h1>
               </div>
             </div>
             
@@ -121,7 +121,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <ProfileMenu />
             </div>
           </header>
-          <main className="flex-1 p-6 overflow-auto">
+          <main className="flex-1 p-4 sm:p-6 overflow-auto">
             {children}
           </main>
         </div>

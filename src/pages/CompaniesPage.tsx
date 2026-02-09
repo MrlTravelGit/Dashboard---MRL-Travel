@@ -59,8 +59,26 @@ export default function CompaniesPage() {
   };
 
   useEffect(() => {
+    if (!isAdmin) return;
     fetchCompanies();
-  }, []);
+  }, [isAdmin]);
+
+  if (!isAdmin) {
+    return (
+      <DashboardLayout>
+        <div className="max-w-2xl">
+          <Card>
+            <CardContent className="p-6">
+              <div className="text-lg font-semibold text-foreground">Acesso restrito</div>
+              <p className="text-sm text-muted-foreground mt-2">
+                Esta área é exclusiva para administradores.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   const formatCNPJ = (value: string) => {
     const numbers = value.replace(/\D/g, '');
@@ -487,7 +505,8 @@ export default function CompaniesPage() {
         ) : (
           <Card>
             <CardContent className="p-0">
-              <Table>
+              <div className="w-full overflow-x-auto">
+                <Table className="min-w-[900px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[60px]">Logo</TableHead>
@@ -539,7 +558,8 @@ export default function CompaniesPage() {
                     </TableRow>
                   ))}
                 </TableBody>
-              </Table>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         )}

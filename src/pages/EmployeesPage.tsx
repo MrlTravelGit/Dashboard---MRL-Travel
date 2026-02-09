@@ -184,7 +184,8 @@ export default function EmployeesPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <div className="w-full overflow-x-auto">
+                  <table className="min-w-[900px] w-full text-sm">
                   <thead>
                     <tr className="border-b">
                       <th className="py-3 text-left font-medium">Nome</th>
@@ -203,7 +204,8 @@ export default function EmployeesPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                  </table>
+                </div>
               </div>
             )}
           </CardContent>
