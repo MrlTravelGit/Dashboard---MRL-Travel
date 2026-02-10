@@ -236,13 +236,48 @@ export default function BookingsPage() {
     try {
       const { data: userData } = await supabase.auth.getUser();
       
+      
+      const makeId = () => {
+        try {
+          const anyCrypto: any = (globalThis as any).crypto;
+          if (anyCrypto?.randomUUID) return anyCrypto.randomUUID();
+        } catch {
+          // ignore
+        }
+        return `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      };
+
+      const normalizeMoney = (v: any) => {
+        const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      const normalizedHotels = (extractedData?.hotels || []).map((h: any) => ({
+        id: h?.id || makeId(),
+        locator: String(h?.locator || ''),
+        hotelName: String(h?.hotelName || h?.name || ''),
+        checkIn: String(h?.checkIn || ''),
+        checkOut: String(h?.checkOut || ''),
+        nights: Number.isFinite(Number(h?.nights)) ? Number(h?.nights) : 0,
+        rooms: Number.isFinite(Number(h?.rooms)) ? Number(h?.rooms) : 1,
+        breakfast: Boolean(h?.breakfast),
+        guestName: String(
+          h?.guestName ||
+          extractedData?.mainPassengerName ||
+          formData.passengerName ||
+          ''
+        ),
+        pricePaid: normalizeMoney(h?.pricePaid),
+        priceOriginal: normalizeMoney(h?.priceOriginal),
+      }));
+
       // Create the booking
       const { error } = await supabase.from('bookings').insert({
         company_id: formData.companyId,
         name: formData.title || 'Nova Reserva',
         source_url: formData.url,
         flights: extractedData.flights || [],
-        hotels: extractedData.hotels || [],
+        hotels: normalizedHotels,
         car_rentals: extractedData.carRentals || [],
         total_paid: totalPaid,
         total_original: totalOriginal,
