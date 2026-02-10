@@ -1,0 +1,27 @@
+project_id = "bejbsvyzncpqzcpmzxgg"
+
+[functions.extract-iddas-booking]
+verify_jwt = false
+
+# These extractors are used by the admin UI and should not fail with 401 when the session
+# hasn't loaded yet. If you prefer to require auth, set verify_jwt=true and ensure the
+# frontend sends Authorization Bearer token explicitly.
+[functions.extract-booking-from-link]
+verify_jwt = false
+
+[functions.extract-flight-data]
+verify_jwt = false
+
+[functions.extract-flight-from-link]
+verify_jwt = false
+
+[functions.link-user-to-company]
+enabled = true
+verify_jwt = true
+import_map = "./functions/link-user-to-company/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/link-user-to-company/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/link-user-to-company/*.html" ]
