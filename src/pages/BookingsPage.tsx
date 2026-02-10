@@ -138,8 +138,18 @@ export default function BookingsPage() {
     setExtractedData(null);
 
     try {
+      // Em alguns ambientes (principalmente produção), o invoke pode não enviar o JWT automaticamente.
+      // Garantimos aqui o header Authorization para evitar 401 na Edge Function.
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+
+      const authHeader = sessionData.session?.access_token
+        ? { Authorization: `Bearer ${sessionData.session.access_token}` }
+        : undefined;
+
       const { data, error } = await supabase.functions.invoke('extract-booking-from-link', {
         body: { url: formData.url },
+        headers: authHeader,
       });
 
       if (error) throw error;
