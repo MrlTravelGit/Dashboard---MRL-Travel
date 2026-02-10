@@ -41,21 +41,14 @@ export function ProfileMenu() {
   const [confirmPassword, setConfirmPassword] = useState('');
 
   useEffect(() => {
-    const fetchProfile = async () => {
-      if (!user) return;
-      
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('full_name, email')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      
-      if (!error && data) {
-        setProfile(data);
-      }
-    };
-    
-    fetchProfile();
+    if (!user) return;
+
+    // Este projeto não depende de uma tabela "profiles".
+    // Usamos os dados do próprio auth.
+    setProfile({
+      full_name: (user.user_metadata as any)?.full_name ?? null,
+      email: user.email ?? null,
+    });
   }, [user]);
 
   const handleLogout = async () => {

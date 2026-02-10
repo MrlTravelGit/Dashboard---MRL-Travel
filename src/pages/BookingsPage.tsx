@@ -147,8 +147,15 @@ export default function BookingsPage() {
         ? { Authorization: `Bearer ${sessionData.session.access_token}` }
         : undefined;
 
-      const { data, error } = await supabase.functions.invoke('extract-booking-from-link', {
-        body: { url: formData.url },
+      const url = formData.url.trim();
+
+      // Para links do IDDAS, usamos a função específica (mais simples e sem dependências externas).
+      // Para outros links, mantemos a função genérica.
+      const isIddasLink = /agencia\.iddas\.com\.br\/reserva\//i.test(url);
+      const functionName = isIddasLink ? 'extract-iddas-booking' : 'extract-booking-from-link';
+
+      const { data, error } = await supabase.functions.invoke(functionName, {
+        body: { url },
         headers: authHeader,
       });
 
