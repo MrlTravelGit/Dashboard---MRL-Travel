@@ -2,13 +2,25 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
+// Lovable export sometimes uses VITE_SUPABASE_PUBLISHABLE_KEY, while many setups use VITE_SUPABASE_ANON_KEY.
+// Support both to avoid deploy issues (e.g., Vercel env var mismatch).
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_KEY =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  // Fail fast with a helpful message instead of confusing 401/404 errors.
+  // eslint-disable-next-line no-console
+  console.error(
+    "Supabase env vars missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_ANON_KEY).",
+  );
+}
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
     storage: localStorage,
     persistSession: true,
