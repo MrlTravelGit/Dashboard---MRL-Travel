@@ -9,16 +9,26 @@ import { Users } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
-type BookingCompany = { name: string } | null;
+type CompanyRef = { name: string } | null;
+
+type EmployeeRow = {
+  id: string;
+  company_id: string;
+  full_name: string;
+  created_at?: string;
+  companies?: CompanyRef;
+};
 
 type BookingRow = {
   company_id: string;
   created_at: string;
   flights: any;
-  companies?: BookingCompany;
+  hotels: any;
+  companies?: CompanyRef;
 };
 
-interface PassengerFromFlights {
+interface EmployeeSummary {
+  id: string;
   name: string;
   companyId: string;
   companyName?: string;
@@ -39,6 +49,25 @@ const safeFormatDate = (iso?: string) => {
   return format(d, 'dd/MM/yyyy', { locale: ptBR });
 };
 
+const extractNamesFromBooking = (booking: BookingRow): string[] => {
+  const names: string[] = [];
+
+  const flights = Array.isArray(booking.flights) ? booking.flights : [];
+  for (const f of flights) {
+    const raw = String(f?.passengerName ?? '').trim();
+    if (raw) names.push(raw);
+  }
+
+  const hotels = Array.isArray(booking.hotels) ? booking.hotels : [];
+  for (const h of hotels) {
+    const raw = String(h?.guestName ?? '').trim();
+    if (raw) names.push(raw);
+  }
+
+  // Remove duplicados dentro da mesma reserva
+  return Array.from(new Set(names.map((n) => n.trim()).filter(Boolean)));
+};
+
 export default function EmployeesPage() {
   const { user, isAdmin } = useAuth();
 
@@ -46,9 +75,9 @@ export default function EmployeesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [forcedCompanyId, setForcedCompanyId] = useState<string | null>(null);
 
-  const [passengers, setPassengers] = useState<PassengerFromFlights[]>([]);
+  const [employees, setEmployees] = useState<EmployeeSummary[]>([]);
 
-  const fetchPassengers = async () => {
+  const fetchEmployees = async () => {
     setIsLoading(true);
 
     try {
@@ -74,73 +103,85 @@ export default function EmployeesPage() {
         setForcedCompanyId(null);
       }
 
-      const baseQuery = supabase
+      // 1) Carrega todos os funcionários cadastrados (passageiros)
+      const empQuery = supabase
+        .from('employees')
+        .select('id, company_id, full_name, created_at, companies(name)')
+        .order('full_name', { ascending: true });
+
+      const empRes = companyId ? await empQuery.eq('company_id', companyId) : await empQuery;
+      if (empRes.error) throw empRes.error;
+
+      const empRows = (empRes.data ?? []) as EmployeeRow[];
+
+      // Index para match rápido por (company_id + nome normalizado)
+      const index = new Map<string, EmployeeSummary>();
+      for (const e of empRows) {
+        const key = `${e.company_id}:${normalizeNameKey(e.full_name)}`;
+        index.set(key, {
+          id: e.id,
+          name: e.full_name,
+          companyId: e.company_id,
+          companyName: e.companies?.name,
+          trips: 0,
+          lastTrip: undefined,
+        });
+      }
+
+      // 2) Carrega reservas e computa métricas (qtd. de viagens e última reserva)
+      // Observação: caso os voos ainda tragam apenas o passageiro principal,
+      // ainda assim os funcionários aparecerão na lista. As métricas vão melhorando
+      // conforme mais nomes forem registrados nas reservas.
+      const bookingQuery = supabase
         .from('bookings')
-        .select('company_id, created_at, flights, companies(name)')
+        .select('company_id, created_at, flights, hotels, companies(name)')
         .order('created_at', { ascending: false });
 
-      const bookingsRes = companyId ? await baseQuery.eq('company_id', companyId) : await baseQuery;
+      const bookingRes = companyId ? await bookingQuery.eq('company_id', companyId) : await bookingQuery;
+      if (bookingRes.error) throw bookingRes.error;
 
-      if (bookingsRes.error) throw bookingsRes.error;
-
-      const rows = (bookingsRes.data ?? []) as BookingRow[];
-
-      const map = new Map<string, PassengerFromFlights>();
+      const rows = (bookingRes.data ?? []) as BookingRow[];
 
       for (const b of rows) {
-        const flights = Array.isArray(b.flights) ? b.flights : [];
-
-        for (const f of flights) {
-          const rawName = String(f?.passengerName ?? '').trim();
-          if (!rawName) continue;
-
+        const names = extractNamesFromBooking(b);
+        for (const rawName of names) {
           const key = `${b.company_id}:${normalizeNameKey(rawName)}`;
+          const current = index.get(key);
+          if (!current) continue;
 
-          const current = map.get(key);
-          if (!current) {
-            map.set(key, {
-              name: rawName,
-              companyId: b.company_id,
-              companyName: b.companies?.name,
-              trips: 1,
-              lastTrip: b.created_at,
-            });
-          } else {
-            current.trips += 1;
-            if (!current.lastTrip || (b.created_at && b.created_at > current.lastTrip)) {
-              current.lastTrip = b.created_at;
-            }
+          current.trips += 1;
+          if (!current.lastTrip || (b.created_at && b.created_at > current.lastTrip)) {
+            current.lastTrip = b.created_at;
           }
         }
       }
 
-      const list = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-
-      setPassengers(list);
+      const list = Array.from(index.values()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      setEmployees(list);
     } catch (err) {
       console.error(err);
-      toast.error('Erro ao carregar funcionários a partir dos voos');
-      setPassengers([]);
+      toast.error('Erro ao carregar funcionários');
+      setEmployees([]);
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchPassengers();
+    fetchEmployees();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return passengers;
+    if (!term) return employees;
 
-    return passengers.filter((p) => {
+    return employees.filter((p) => {
       const byName = p.name.toLowerCase().includes(term);
       const byCompany = (p.companyName ?? '').toLowerCase().includes(term);
       return byName || byCompany;
     });
-  }, [passengers, searchTerm]);
+  }, [employees, searchTerm]);
 
   return (
     <DashboardLayout>
@@ -150,7 +191,7 @@ export default function EmployeesPage() {
           <div>
             <h1 className="text-2xl font-bold">Funcionários</h1>
             <p className="text-muted-foreground">
-              Estes passageiros são gerados automaticamente a partir das reservas (voos) cadastradas no sistema.
+              Estes passageiros são gerados automaticamente a partir das reservas cadastradas no sistema.
             </p>
           </div>
         </div>
@@ -168,9 +209,9 @@ export default function EmployeesPage() {
               </div>
             </div>
 
-            {!isAdmin && (
+            {!isAdmin && forcedCompanyId && (
               <p className="text-sm text-muted-foreground">
-                Se algum passageiro aparecer como "Não identificado", preencha o nome no momento de importar o voo.
+                Você está visualizando apenas os funcionários da sua empresa.
               </p>
             )}
           </CardHeader>
@@ -180,30 +221,30 @@ export default function EmployeesPage() {
               <div className="py-10 text-center text-muted-foreground">Carregando...</div>
             ) : filtered.length === 0 ? (
               <div className="py-10 text-center text-muted-foreground">
-                Nenhum passageiro encontrado a partir dos voos cadastrados.
+                Nenhum funcionário encontrado.
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <div className="w-full overflow-x-auto">
                   <table className="min-w-[900px] w-full text-sm">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="py-3 text-left font-medium">Nome</th>
-                      {isAdmin && <th className="py-3 text-left font-medium">Empresa</th>}
-                      <th className="py-3 text-left font-medium">Qtd. de viagens</th>
-                      <th className="py-3 text-left font-medium">Última reserva</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((p) => (
-                      <tr key={`${p.companyId}:${normalizeNameKey(p.name)}`} className="border-b last:border-0">
-                        <td className="py-3 font-medium">{p.name}</td>
-                        {isAdmin && <td className="py-3">{p.companyName ?? 'Não informado'}</td>}
-                        <td className="py-3">{p.trips}</td>
-                        <td className="py-3">{safeFormatDate(p.lastTrip)}</td>
+                    <thead>
+                      <tr className="border-b">
+                        <th className="py-3 text-left font-medium">Nome</th>
+                        {isAdmin && <th className="py-3 text-left font-medium">Empresa</th>}
+                        <th className="py-3 text-left font-medium">Qtd. de viagens</th>
+                        <th className="py-3 text-left font-medium">Última reserva</th>
                       </tr>
-                    ))}
-                  </tbody>
+                    </thead>
+                    <tbody>
+                      {filtered.map((p) => (
+                        <tr key={p.id} className="border-b last:border-0">
+                          <td className="py-3 font-medium">{p.name}</td>
+                          {isAdmin && <td className="py-3">{p.companyName ?? 'Não informado'}</td>}
+                          <td className="py-3">{p.trips}</td>
+                          <td className="py-3">{safeFormatDate(p.lastTrip)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
                   </table>
                 </div>
               </div>
