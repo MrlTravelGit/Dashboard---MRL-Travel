@@ -12,7 +12,11 @@ interface AuthContextType {
   appRole: AppRole | null;
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
+  signUp: (
+    email: string,
+    password: string,
+    fullName: string
+  ) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -26,66 +30,134 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [appRole, setAppRole] = useState<AppRole | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const clearSupabaseStorage = () => {
+    try {
+      const keys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k) keys.push(k);
+      }
+      for (const k of keys) {
+        if (k.startsWith("sb-")) localStorage.removeItem(k);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const resetAuthState = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore
+    }
+    clearSupabaseStorage();
+    setUser(null);
+    setSession(null);
+    setIsAdmin(false);
+    setCompanyId(null);
+    setAppRole(null);
+  };
+
+  const withTimeout = async <T,>(p: Promise<T>, ms: number, label: string) => {
+    let t: number | undefined;
+    const timeout = new Promise<T>((_resolve, reject) => {
+      t = window.setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    });
+    try {
+      return await Promise.race([p, timeout]);
+    } finally {
+      if (t) window.clearTimeout(t);
+    }
+  };
+
   const loadRoleAndCompany = async (userId: string) => {
-    // Admin global: quem estiver em admin_users é admin do sistema inteiro.
-    const { data: adminRow } = await supabase
-      .from("admin_users")
-      .select("user_id")
-      .eq("user_id", userId)
-      .maybeSingle();
+    try {
+      const adminPromise = supabase
+        .from("admin_users")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
 
-    const admin = !!adminRow;
-    setIsAdmin(admin);
-    setAppRole(admin ? "admin" : "user");
+      const companyPromise = supabase
+        .from("company_users")
+        .select("company_id")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    // Vínculo do usuário com empresa (para usuários da empresa).
-    const { data: cu } = await supabase
-      .from("company_users")
-      .select("company_id")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      const [{ data: adminRow }, { data: cu }] = await withTimeout(
+        Promise.all([adminPromise, companyPromise]),
+        7000,
+        "loadRoleAndCompany"
+      );
 
-    setCompanyId(cu?.company_id ?? null);
+      const admin = !!adminRow;
+      setIsAdmin(admin);
+      setAppRole(admin ? "admin" : "user");
+      setCompanyId(cu?.company_id ?? null);
+    } catch (e) {
+      console.error("Error loading role/company:", e);
+      setIsAdmin(false);
+      setCompanyId(null);
+      setAppRole(null);
+    }
   };
 
   useEffect(() => {
     const init = async () => {
       setIsLoading(true);
-      const { data } = await supabase.auth.getSession();
-      const currentSession = data.session ?? null;
+      try {
+        const { data, error } = await withTimeout(
+          supabase.auth.getSession(),
+          7000,
+          "getSession"
+        );
 
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
+        if (error) {
+          console.error("getSession error:", error);
+          await resetAuthState();
+          return;
+        }
 
-      if (currentSession?.user?.id) {
-        await loadRoleAndCompany(currentSession.user.id);
-      } else {
-        setIsAdmin(false);
-        setCompanyId(null);
-        setAppRole(null);
+        const currentSession = data.session ?? null;
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
+
+        if (currentSession?.user?.id) {
+          await loadRoleAndCompany(currentSession.user.id);
+        } else {
+          setIsAdmin(false);
+          setCompanyId(null);
+          setAppRole(null);
+        }
+      } catch (e) {
+        console.error("Auth init failed:", e);
+        await resetAuthState();
+      } finally {
+        setIsLoading(false);
       }
-
-      setIsLoading(false);
     };
 
     void init();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (_event, newSession) => {
+        setSession(newSession);
+        setUser(newSession?.user ?? null);
 
-      if (newSession?.user?.id) {
-        await loadRoleAndCompany(newSession.user.id);
-      } else {
-        setIsAdmin(false);
-        setCompanyId(null);
-        setAppRole(null);
+        if (newSession?.user?.id) {
+          await loadRoleAndCompany(newSession.user.id);
+        } else {
+          setIsAdmin(false);
+          setCompanyId(null);
+          setAppRole(null);
+        }
+
+        setIsLoading(false);
       }
-
-      setIsLoading(false);
-    });
+    );
 
     return () => {
       authListener.subscription.unsubscribe();
@@ -107,12 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-    setIsAdmin(false);
-    setCompanyId(null);
-    setAppRole(null);
+    await resetAuthState();
   };
 
   return (
