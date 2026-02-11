@@ -89,7 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const [{ data: adminRow }, { data: cu }] = await withTimeout(
         Promise.all([adminPromise, companyPromise]),
-        7000,
+        20000,
         "loadRoleAndCompany"
       );
 
@@ -111,7 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { data, error } = await withTimeout(
           supabase.auth.getSession(),
-          7000,
+          20000,
           "getSession"
         );
 
@@ -134,7 +134,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (e) {
         console.error("Auth init failed:", e);
-        await resetAuthState();
+        // Timeout/instabilidade de rede não deve forçar logout nem exigir limpar cookies.
+        // Mantemos o app utilizável finalizando o loading e limpando o estado em memória.
+        setUser(null);
+        setSession(null);
+        setIsAdmin(false);
+        setCompanyId(null);
+        setAppRole(null);
       } finally {
         setIsLoading(false);
       }

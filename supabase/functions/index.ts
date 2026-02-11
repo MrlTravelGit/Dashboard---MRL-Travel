@@ -155,58 +155,31 @@ function cleanCpf(v: string): string {
 }
 
 function extractPassengers(pageText: string): Passenger[] {
-  // O IDDAS frequentemente quebra os dados do passageiro em várias linhas e cards.
-  // Então, em vez de exigir que esteja tudo na mesma linha, buscamos por CPF e
-  // capturamos uma "janela" de texto ao redor para extrair nome e nascimento.
-  const text = pageText
-    .replace(/\u00a0/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\r/g, "")
-    .trim();
-
   const passengers: Passenger[] = [];
-  const cpfRegex = /\bCPF\b[:\s]*([\d.\-]{11,14})/gi;
-  const seen = new Set<string>();
+  const lines = pageText.split("\n").map((l) => l.trim()).filter(Boolean);
 
-  let m: RegExpExecArray | null;
-  while ((m = cpfRegex.exec(text)) !== null) {
-    const cpf = cleanCpf(m[1] || "");
-    if (cpf.length !== 11) continue;
-    if (seen.has(cpf)) continue;
+  // Heurística: linhas que têm CPF e data no formato dd/mm/aaaa
+  for (const line of lines) {
+    if (!/\bCPF\b/i.test(line)) continue;
+    const m = line.match(/^([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{5,}),\s*(\d{2}\/\d{2}\/\d{4}).*?\bCPF\b[:\s]*([\d.\-]{11,14})/i);
+    if (!m) continue;
 
-    const idx = m.index;
-    const start = Math.max(0, idx - 350);
-    const end = Math.min(text.length, idx + 500);
-    const chunk = text.slice(start, end);
+    const fullName = m[1].trim();
+    const birthDate = toISODateFromBR(m[2]);
+    const cpf = cleanCpf(m[3]);
 
-    // Nome: pega a última sequência grande de letras antes do CPF
-    const before = chunk.slice(0, Math.min(chunk.length, idx - start));
-    const nameCandidates = before.match(/[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{8,}/g);
-    const fullName = (nameCandidates?.[nameCandidates.length - 1] || "")
-      .replace(/\s{2,}/g, " ")
-      .trim();
+    if (!fullName || !birthDate || cpf.length !== 11) continue;
 
-    // Nascimento: tenta "Nasc"/"Nascimento" ou qualquer data dd/mm/aaaa perto do CPF
-    const birthMatch =
-      chunk.match(/\bNasc(?:imento)?\b[:\s]*([0-3]\d\/[01]\d\/\d{4})/i) ||
-      chunk.match(/\b([0-3]\d\/[01]\d\/\d{4})\b/);
-    const birthDate = birthMatch?.[1] ? toISODateFromBR(birthMatch[1]) : "";
+    const email = (line.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "").trim();
 
-    const email = (chunk.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "").trim();
-
+    // Telefone: tenta formatos comuns, senão deixa vazio
     const phoneMatch =
-      chunk.match(/\(\d{2}\)\s*\d{4,5}-\d{4}/) ||
-      chunk.match(/\b\d{2}\s*\d{4,5}-\d{4}\b/) ||
-      chunk.match(/\b\d{10,11}\b/);
+      line.match(/\(\d{2}\)\s*\d{4,5}-\d{4}/) ||
+      line.match(/\b\d{2}\s*\d{4,5}-\d{4}\b/) ||
+      null;
     const phone = (phoneMatch?.[0] || "").trim();
 
-    const passport = (chunk.match(/Passaporte[:\s]*([A-Z0-9]{5,})/i)?.[1] || "").trim();
-
-    // Campos mínimos para criar funcionário automaticamente
-    if (!fullName || !birthDate) {
-      seen.add(cpf);
-      continue;
-    }
+    const passport = (line.match(/Passaporte[:\s]*([A-Z0-9]{5,})/i)?.[1] || "").trim();
 
     passengers.push({
       fullName,
@@ -217,11 +190,15 @@ function extractPassengers(pageText: string): Passenger[] {
       passport,
       passportExpiry: "",
     });
-
-    seen.add(cpf);
   }
 
-  return passengers;
+  // Remove duplicados por CPF
+  const seen = new Set<string>();
+  return passengers.filter((p) => {
+    if (seen.has(p.cpf)) return false;
+    seen.add(p.cpf);
+    return true;
+  });
 }
 
 serve(async (req) => {
@@ -265,16 +242,6 @@ serve(async (req) => {
     const flights = matchAllFlights(pageText, mainPassengerName);
     const passengers = extractPassengers(pageText);
 
-    // Ajuda de diagnóstico: quando passageiros vierem vazios, devolvemos um pequeno
-    // trecho do texto para validar se a página contém de fato CPF/dados do passageiro.
-    const debug = passengers.length
-      ? undefined
-      : {
-          pageTextLength: pageText.length,
-          hasCpf: /\bCPF\b[:\s]*[\d.\-]{11,14}/i.test(pageText),
-          sampleStart: pageText.slice(0, 4000),
-        };
-
     const suggestedTitle =
       flights.length > 0
         ? `${flights[0].originCode} à ${flights[0].destinationCode} (${flights[0].departureDate || "sem data"})`
@@ -289,7 +256,6 @@ serve(async (req) => {
           mainPassengerName,
           flights,
           passengers,
-          debug,
         },
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
