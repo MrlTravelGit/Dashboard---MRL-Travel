@@ -34,11 +34,9 @@ function inferAirline(block: string): "GOL" | "LATAM" | "AZUL" | "" {
 }
 
 function extractMainPassengerName(pageText: string): string {
-  // Exemplo: "Reservado por JESSICA VELOSO MACHADO"
   const m1 = pageText.match(/Reservado por\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{5,})/i);
   if (m1?.[1]) return m1[1].trim();
 
-  // Fallback: primeira linha de passageiro "NOME, dd/mm/yyyy, CPF..."
   const m2 = pageText.match(/([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{5,}),\s*\d{2}\/\d{2}\/\d{4},\s*CPF/i);
   if (m2?.[1]) return m2[1].trim();
 
@@ -66,13 +64,16 @@ type ExtractedFlight = {
 function matchAllFlights(pageText: string, mainPassengerName: string): ExtractedFlight[] {
   const flights: ExtractedFlight[] = [];
 
-  // Captura:
-  // "Voo de Belo Horizonte (CNF) para São Paulo (CGH)"
   const headerRegex =
     /Voo de\s+(.+?)\s+\(([A-Z]{3})\)\s+para\s+(.+?)\s+\(([A-Z]{3})\)/g;
 
-  const indices: { start: number; origin: string; originCode: string; destination: string; destinationCode: string }[] =
-    [];
+  const indices: {
+    start: number;
+    origin: string;
+    originCode: string;
+    destination: string;
+    destinationCode: string;
+  }[] = [];
 
   let mh: RegExpExecArray | null;
   while ((mh = headerRegex.exec(pageText)) !== null) {
@@ -96,9 +97,10 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
     const arr = block.match(/Chegada\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}h\d{2})/i);
     const voo = block.match(/Voo\s+(\d{3,4})/i);
 
-    const loc = block.match(/Localizador\s+([A-Z0-9]{5,8})/i)?.[1]
-      || block.match(/\b[A-Z0-9]{5,8}\b/)?.[0]
-      || "";
+    const loc =
+      block.match(/Localizador\s+([A-Z0-9]{5,8})/i)?.[1] ||
+      block.match(/\b[A-Z0-9]{5,8}\b/)?.[0] ||
+      "";
 
     let airline = inferAirline(block);
     if (!airline && lastAirline) airline = lastAirline;
@@ -106,8 +108,7 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
 
     const passengerName = mainPassengerName || "";
 
-    const type: "outbound" | "return" =
-      i === 0 ? "outbound" : "return";
+    const type: "outbound" | "return" = i === 0 ? "outbound" : "return";
 
     const id = `${loc || "NOLOC"}:${voo?.[1] || "NOVOO"}:${i}`;
 
@@ -133,6 +134,73 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
   return flights;
 }
 
+type Passenger = {
+  fullName: string;
+  birthDate: string; // YYYY-MM-DD
+  cpf: string; // digits
+  phone: string;
+  email: string;
+  passport: string;
+  passportExpiry: string;
+};
+
+function toISODateFromBR(dmy: string): string {
+  const m = dmy.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return "";
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
+function cleanCpf(v: string): string {
+  return (v || "").replace(/\D/g, "");
+}
+
+function extractPassengers(pageText: string): Passenger[] {
+  const passengers: Passenger[] = [];
+  const lines = pageText.split("\n").map((l) => l.trim()).filter(Boolean);
+
+  // Heurística: linhas que têm CPF e data no formato dd/mm/aaaa
+  for (const line of lines) {
+    if (!/\bCPF\b/i.test(line)) continue;
+    const m = line.match(/^([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{5,}),\s*(\d{2}\/\d{2}\/\d{4}).*?\bCPF\b[:\s]*([\d.\-]{11,14})/i);
+    if (!m) continue;
+
+    const fullName = m[1].trim();
+    const birthDate = toISODateFromBR(m[2]);
+    const cpf = cleanCpf(m[3]);
+
+    if (!fullName || !birthDate || cpf.length !== 11) continue;
+
+    const email = (line.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "").trim();
+
+    // Telefone: tenta formatos comuns, senão deixa vazio
+    const phoneMatch =
+      line.match(/\(\d{2}\)\s*\d{4,5}-\d{4}/) ||
+      line.match(/\b\d{2}\s*\d{4,5}-\d{4}\b/) ||
+      null;
+    const phone = (phoneMatch?.[0] || "").trim();
+
+    const passport = (line.match(/Passaporte[:\s]*([A-Z0-9]{5,})/i)?.[1] || "").trim();
+
+    passengers.push({
+      fullName,
+      birthDate,
+      cpf,
+      phone,
+      email,
+      passport,
+      passportExpiry: "",
+    });
+  }
+
+  // Remove duplicados por CPF
+  const seen = new Set<string>();
+  return passengers.filter((p) => {
+    if (seen.has(p.cpf)) return false;
+    seen.add(p.cpf);
+    return true;
+  });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -144,10 +212,10 @@ serve(async (req) => {
     const url = body?.url;
 
     if (!url || typeof url !== "string") {
-      return new Response(
-        JSON.stringify({ success: false, error: "Envie { url: string }" }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ success: false, error: "Envie { url: string }" }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const r = await fetch(url, {
@@ -158,10 +226,10 @@ serve(async (req) => {
     });
 
     if (!r.ok) {
-      return new Response(
-        JSON.stringify({ success: false, error: `Falha ao buscar URL (${r.status})` }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ success: false, error: `Falha ao buscar URL (${r.status})` }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const html = await r.text();
@@ -172,6 +240,7 @@ serve(async (req) => {
     const total = parseMoneyBRL(pageText);
     const mainPassengerName = extractMainPassengerName(pageText);
     const flights = matchAllFlights(pageText, mainPassengerName);
+    const passengers = extractPassengers(pageText);
 
     const suggestedTitle =
       flights.length > 0
@@ -186,14 +255,15 @@ serve(async (req) => {
           suggestedTitle,
           mainPassengerName,
           flights,
+          passengers,
         },
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
-    return new Response(
-      JSON.stringify({ success: false, error: e?.message || "Erro" }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({ success: false, error: e?.message || "Erro" }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
