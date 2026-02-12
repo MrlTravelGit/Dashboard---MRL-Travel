@@ -4,6 +4,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
+
+import { Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+
+import { Button } from "@/components/ui/button";
+
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Users } from 'lucide-react';
@@ -105,6 +121,22 @@ export default function EmployeesPage() {
       toast.error('Não foi possível carregar funcionários.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+
+  const handleDeleteEmployee = async (employeeId: string) => {
+    try {
+      const { error } = await supabase.from('employees').delete().eq('id', employeeId);
+      if (error) throw error;
+
+      toast.success('Funcionário removido com sucesso.');
+
+      const effectiveCompanyId = forcedCompanyId || (isAdmin ? (selectedCompanyId || null) : null);
+      await fetchEmployees(effectiveCompanyId);
+    } catch (e: any) {
+      console.error(e);
+      toast.error('Não foi possível remover o funcionário.');
     }
   };
 
@@ -226,6 +258,7 @@ export default function EmployeesPage() {
                       <th className="text-left py-3 font-medium">Empresa</th>
                       <th className="text-left py-3 font-medium">CPF</th>
                       <th className="text-left py-3 font-medium">Nascimento</th>
+                      <th className="text-left py-3 font-medium">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -235,6 +268,31 @@ export default function EmployeesPage() {
                         <td className="py-3">{e.companies?.name || 'Não informado'}</td>
                         <td className="py-3">{e.cpf || 'Não informado'}</td>
                         <td className="py-3">{safeFormatDate(e.birth_date)}</td>
+                        <td className="py-3">
+                          {(isAdmin || (!forcedCompanyId || e.company_id === forcedCompanyId)) ? (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="icon" title="Remover funcionário">
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Remover funcionário</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Essa ação remove o funcionário da empresa. Você tem certeza?
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => handleDeleteEmployee(e.id)}>
+                                    Remover
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          ) : null}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
