@@ -12,12 +12,12 @@ export default function HotelsPage() {
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredHotels = hotels.filter((hotel) => {
-    const q = searchTerm.toLowerCase();
-    const locator = (hotel.locator || '').toLowerCase();
-    const name = (hotel.hotelName || '').toLowerCase();
-    const guest = (hotel.guestName || '').toLowerCase();
-    return locator.includes(q) || name.includes(q) || guest.includes(q);
+  const filteredHotels = hotels.filter(hotel => {
+    return (
+      (hotel.locator || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (hotel.hotelName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (hotel.guestName || '').toLowerCase().includes(searchTerm.toLowerCase())
+    );
   });
 
   return (
