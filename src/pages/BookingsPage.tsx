@@ -403,9 +403,9 @@ export default function BookingsPage() {
         const guestNames = passengersToSave.map((p: any) => p.name).filter(Boolean).join(', ');
         
         for (const hotel of extractedData.hotels) {
-          try {
+            try {
             // Use dynamic insert to bypass type checking until migration is applied
-            const { error: hotelError } = await (supabase.from('hotel_bookings') as any).insert({
+            const { error: hotelError } = await (supabase as any).from('hotel_bookings').insert({
               booking_id: bookingId,
               company_id: formData.companyId,
               hotel_name: hotel.name || hotel.hotelName || '',

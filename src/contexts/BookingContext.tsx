@@ -50,6 +50,7 @@ type BookingRow = {
   flights: Flight[] | null;
   hotels: Hotel[] | null;
   car_rentals: CarRental[] | null;
+  passengers?: any[] | null;
 };
 
 const BookingContext = createContext<BookingContextType | undefined>(undefined);
@@ -154,7 +155,7 @@ export function BookingProvider({ children }: { children: ReactNode }) {
 
     let query = supabase
       .from("bookings")
-      .select("id, name, company_id, created_at, flights, hotels, car_rentals")
+      .select("id, name, company_id, created_at, flights, hotels, car_rentals, passengers")
       .order("created_at", { ascending: false });
 
     if (!isAdmin) {
@@ -181,6 +182,7 @@ export function BookingProvider({ children }: { children: ReactNode }) {
       flights: (b.flights as unknown as Flight[]) || [],
       hotels: (b.hotels as unknown as Hotel[]) || [],
       car_rentals: (b.car_rentals as unknown as CarRental[]) || [],
+      passengers: (b.passengers as unknown as any[]) || [],
     }));
 
     setBookings(typed);

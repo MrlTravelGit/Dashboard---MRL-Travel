@@ -171,75 +171,71 @@ function looksLikeCompanyName(name: string): boolean {
 }
 
 function extractPassengers(pageText: string): Passenger[] {
-  // Rules:
-  // - Only parse the "Passageiros" block
-  // - Parse line-by-line; name before first comma; require CPF
-  // - Deduplicate by CPF using Map<cpf, Passenger>
-
   const text = pageText.replace(/\u00a0/g, ' ').replace(/\r/g, '').trim();
 
-  const secMatch = text.match(/Passageiros[:\s]*\d*\s*Adultos?/i) || text.match(/Passageiros\b/i);
-  if (!secMatch) return [];
-
-  const startIdx = secMatch.index || 0;
-  const tail = text.slice(startIdx);
-
-  const lines = tail.split(/\n/);
-  const passengerLines: string[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) break;
-    if (/^(Hotel|Hospedagem|Voo|Voos|Pagamento|Total|Forma de pagamento)\b/i.test(line)) break;
-    passengerLines.push(line);
-  }
-
-  // fallback: capture nearby lines with CPF if none found
-  const cpfLineRegex = /\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2}/;
-  if (passengerLines.length === 0) {
-    const nearby = tail.split(/\n/).slice(0, 20);
-    for (const l of nearby) if (cpfLineRegex.test(l)) passengerLines.push(l.trim());
-  }
-
+  // Find all CPF occurrences in the whole page and extract nearby name
+  const cpfRegex = /(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2})/g;
   const map = new Map<string, Passenger>();
 
-  for (const rawLine of passengerLines) {
-    const line = rawLine.replace(/\s{2,}/g, ' ').trim();
-    const firstComma = line.indexOf(',');
-    const nameCandidate = (firstComma >= 0 ? line.slice(0, firstComma) : line).trim();
-    if (!nameCandidate) continue;
+  let m: RegExpExecArray | null;
+  while ((m = cpfRegex.exec(text)) !== null) {
+    try {
+      const cpfRaw = m[1];
+      const cpfDigits = normalizeCPF(cpfRaw);
+      if (cpfDigits.length !== 11) continue;
+      if (map.has(cpfDigits)) continue; // dedupe
 
-    if (/^Reservado por\b/i.test(nameCandidate)) continue; // ignore reservant
-    if (looksLikeCompanyName(nameCandidate)) continue;
+      // Get chunk before CPF and take the last segment after the last newline
+      const before = text.slice(Math.max(0, m.index - 400), m.index);
+      let beforeSeg = before.split(/\n/).pop() || before;
 
-    const birthMatch = line.match(/(\d{2}\/\d{2}\/\d{4})/);
-    const birthDate = birthMatch ? toISODateFromBR(birthMatch[1]) : '';
+      // Cut at common separators to remove trailing info
+      const separators = [',', '\\(', ' - ', ' Tel:', ' Nasc:', ' Nascimento:'];
+      for (const sep of separators) {
+        const idx = beforeSeg.indexOf(sep);
+        if (idx >= 0) {
+          beforeSeg = beforeSeg.slice(0, idx);
+        }
+      }
 
-    const cpfMatch = line.match(/(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2})/);
-    if (!cpfMatch) continue; // require CPF
-    const cpfDigits = normalizeCPF(cpfMatch[1]);
-    if (cpfDigits.length !== 11) continue;
-    if (map.has(cpfDigits)) continue; // dedupe by CPF (keep first)
+      let nameCandidate = beforeSeg.trim();
+      if (!nameCandidate) continue;
 
-    const phoneMatch = line.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
-    const phone = phoneMatch ? phoneMatch[0].trim() : '';
+      // Ignore header-like entries
+      if (/\b(RESERVADO POR|PASSAGEIROS:|ADULTOS|CRIANÇAS|BEB[EÉ]S)\b/i.test(nameCandidate)) continue;
 
-    const emailMatch = line.match(/\S+@\S+\.\S+/);
-    const email = emailMatch ? emailMatch[0].trim() : '';
+      // Ignore obvious company names
+      if (looksLikeCompanyName(nameCandidate)) continue;
 
-    const passportMatch = line.match(/Passaporte[:\s]*([A-Z0-9\-]+)/i);
-    const passport = passportMatch ? passportMatch[1].trim() : '';
+      // From the nearby chunk after CPF, try to find birth date, phone, email, passport
+      const after = text.slice(m.index, Math.min(text.length, m.index + 400));
+      const birthMatch = (before + after).match(/(\d{2}\/\d{2}\/\d{4})/);
+      const birthDate = birthMatch ? toISODateFromBR(birthMatch[1]) : '';
 
-    const passenger: Passenger = {
-      fullName: nameCandidate,
-      birthDate: birthDate || '',
-      cpf: cpfDigits,
-      phone: phone || '',
-      email: email || '',
-      passport: passport || '',
-      passportExpiry: '',
-    };
+      const phoneMatch = (before + after).match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
+      const phone = phoneMatch ? phoneMatch[0].trim() : '';
 
-    map.set(cpfDigits, passenger);
+      const emailMatch = (before + after).match(/\S+@\S+\.\S+/);
+      const email = emailMatch ? emailMatch[0].trim() : '';
+
+      const passportMatch = (before + after).match(/Passaporte[:\s]*([A-Z0-9\-]+)/i);
+      const passport = passportMatch ? passportMatch[1].trim() : '';
+
+      const passenger: Passenger = {
+        fullName: nameCandidate,
+        birthDate: birthDate || '',
+        cpf: cpfDigits,
+        phone: phone || '',
+        email: email || '',
+        passport: passport || '',
+        passportExpiry: '',
+      };
+
+      map.set(cpfDigits, passenger);
+    } catch (e) {
+      // Ignore extraction errors for one CPF and continue
+      continue;
+    }
   }
 
   return Array.from(map.values());
@@ -368,11 +364,23 @@ serve(async (req: Request) => {
 
     const total = parseMoneyBRL(pageText);
     const reservedBy = extractReservedBy(pageText);
-    const passengers = extractPassengers(pageText);
-    
+    let passengers = extractPassengers(pageText);
+
+    // If reservedBy exists, filter it out from passengers (fuzzy contains)
+    if (reservedBy) {
+      const rb = reservedBy.trim().toLowerCase();
+      passengers = passengers.filter(p => !(p.fullName || '').toLowerCase().includes(rb));
+    }
+
+    // If we have at least one real person (cpf or birthDate), drop obvious company-like names
+    const hasRealPerson = passengers.some(p => (p.cpf && p.cpf.length >= 11) || Boolean(p.birthDate));
+    if (hasRealPerson) {
+      passengers = passengers.filter(p => !looksLikeCompanyName(p.fullName));
+    }
+
     // mainPassengerName is ALWAYS the first passenger real, otherwise empty
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
-    
+
     const flights = matchAllFlights(pageText, mainPassengerName);
     const hotels = matchAllHotels(pageText) || [];
     const cars = matchAllCars(pageText) || [];
@@ -457,7 +465,7 @@ serve(async (req: Request) => {
       }
 
       return {
-        name: h.hotelName || (h as any).name || null,
+        hotelName: h.hotelName || (h as any).name || null,
         confirmationCode: h.confirmationCode || (h as any).confirm || undefined,
         checkIn: formatBRDate(ci),
         checkOut: formatBRDate(co),

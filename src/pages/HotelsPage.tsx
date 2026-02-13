@@ -33,7 +33,8 @@ export default function HotelsPage() {
       setLoading(true);
       try {
         // Use dynamic query to bypass type checking until migration is applied
-        const { data, error } = await (supabase.from('hotel_bookings') as any)
+        const { data, error } = await (supabase as any)
+          .from('hotel_bookings')
           .select('*')
           .order('created_at', { ascending: false });
 
