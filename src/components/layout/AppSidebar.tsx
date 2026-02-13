@@ -25,10 +25,13 @@ const menuItems = [
 export function AppSidebar() {
   const { state } = useSidebar();
   const location = useLocation();
-  const { isAdmin } = useAuth();
+  const { isAdmin, appRole, isLoadingRole } = useAuth();
   const collapsed = state === 'collapsed';
 
-  const visibleMenuItems = menuItems.filter(item => !item.adminOnly || isAdmin);
+  // Mostra opções admin quando: isAdmin === true OU appRole === "admin"
+  // Garante que não mostra admin options enquanto role está carregando
+  const canViewAdmin = !isLoadingRole && (isAdmin || appRole === "admin");
+  const visibleMenuItems = menuItems.filter(item => !item.adminOnly || canViewAdmin);
 
   return (
     <Sidebar className={collapsed ? 'w-14' : 'w-60'} collapsible="icon">

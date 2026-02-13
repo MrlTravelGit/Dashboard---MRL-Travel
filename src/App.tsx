@@ -22,9 +22,9 @@ const queryClient = new QueryClient();
 
 // Protected route component
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, isLoadingRole } = useAuth();
 
-  if (isLoading) {
+  if (isLoading || isLoadingRole) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -40,9 +40,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { isAdmin, isLoading } = useAuth();
+  const { isAdmin, isLoading, isLoadingRole } = useAuth();
 
-  if (isLoading) {
+  // Não redirecionar enquanto role está sendo carregada
+  if (isLoading || isLoadingRole) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -61,9 +62,9 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 
 // App routes with auth context available
 function AppRoutes() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, isLoadingRole } = useAuth();
 
-  if (isLoading) {
+  if (isLoading || isLoadingRole) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -83,23 +84,12 @@ function AppRoutes() {
       <Route path="/voos" element={<ProtectedRoute><FlightsPage /></ProtectedRoute>} />
       <Route path="/hospedagens" element={<ProtectedRoute><HotelsPage /></ProtectedRoute>} />
       <Route path="/aluguel-carro" element={<ProtectedRoute><CarRentalsPage /></ProtectedRoute>} />
-      <Route path="/empresas" element={<ProtectedRoute><CompaniesPage /></ProtectedRoute>} />
-      <Route path="/funcionarios" element={<ProtectedRoute><EmployeesPage /></ProtectedRoute>} />
+      <Route path="/empresas" element={<ProtectedRoute><AdminRoute><CompaniesPage /></AdminRoute></ProtectedRoute>} />
+      <Route path="/funcionarios" element={<ProtectedRoute><AdminRoute><EmployeesPage /></AdminRoute></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }
-
-<Route
-  path="/empresas"
-  element={
-    <ProtectedRoute>
-      <AdminRoute>
-        <CompaniesPage />
-      </AdminRoute>
-    </ProtectedRoute>
-  }
-/>
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
