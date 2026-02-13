@@ -369,6 +369,92 @@ serve(async (req) => {
         ? `${flights[0].originCode} à ${flights[0].destinationCode} (${flights[0].departureDate || "sem data"})`
         : "Reserva (link)";
 
+    // Helper: parse dd/MM/yyyy -> Date
+    function parseBRDate(dmy?: string | null | undefined): Date | null {
+      if (!dmy) return null;
+      const s = dmy.trim();
+      if (!s || s === '-') return null;
+      const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (!m) return null;
+      const day = Number(m[1]);
+      const month = Number(m[2]) - 1;
+      const year = Number(m[3]);
+      const dt = new Date(year, month, day);
+      if (Number.isNaN(dt.getTime())) return null;
+      return dt;
+    }
+
+    function formatBRDate(d: Date | null): string | null {
+      if (!d) return null;
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      return `${dd}/${mm}/${yyyy}`;
+    }
+
+    // derive min/max flight departure dates
+    const flightDates: Date[] = [];
+    for (const f of flights) {
+      const d = parseBRDate(f.departureDate);
+      if (d) flightDates.push(d);
+    }
+    let flightMin: Date | null = null;
+    let flightMax: Date | null = null;
+    if (flightDates.length > 0) {
+      flightDates.sort((a, b) => a.getTime() - b.getTime());
+      flightMin = flightDates[0];
+      flightMax = flightDates[flightDates.length - 1];
+    }
+
+    // Normalize hotels to include name and computed checkIn/checkOut as dd/MM/yyyy or null
+    const hotelsOut = hotels.map((h) => {
+      const rawCheckIn = (h.checkIn || (h as any).check_in || '') as string;
+      const rawCheckOut = (h.checkOut || (h as any).check_out || '') as string;
+      let ci = parseBRDate(rawCheckIn);
+      let co = parseBRDate(rawCheckOut);
+
+      // If neither present, derive from flights
+      if ((!ci || !co) && flightMin && flightMax) {
+        if (!ci) ci = flightMin;
+        if (!co) co = flightMax;
+        // if equal, add 1 day to checkOut
+        if (ci && co && ci.getTime() === co.getTime()) {
+          const next = new Date(co.getTime());
+          next.setDate(next.getDate() + 1);
+          co = next;
+        }
+      }
+
+      // If only one side exists and flights provide a complement, try to complement
+      if (ci && !co && flightMax) {
+        co = flightMax;
+        if (ci.getTime() === co.getTime()) {
+          const next = new Date(co.getTime());
+          next.setDate(next.getDate() + 1);
+          co = next;
+        }
+      }
+      if (co && !ci && flightMin) {
+        ci = flightMin;
+        if (ci.getTime() === co.getTime()) {
+          const next = new Date(co.getTime());
+          next.setDate(next.getDate() + 1);
+          co = next;
+        }
+      }
+
+      return {
+        name: h.hotelName || (h as any).name || null,
+        confirmationCode: h.confirmationCode || (h as any).confirm || undefined,
+        checkIn: formatBRDate(ci),
+        checkOut: formatBRDate(co),
+        city: h.city,
+        address: h.address,
+        total: h.total ?? null,
+        passengers: h.passengers || [],
+      };
+    });
+
     // Normalize response to always include hotels and cars arrays (never null)
     const dataOut = {
       total: total ?? null,
@@ -376,7 +462,7 @@ serve(async (req) => {
       mainPassengerName,
       passengers,
       flights,
-      hotels,
+      hotels: hotelsOut,
       cars,
     };
 

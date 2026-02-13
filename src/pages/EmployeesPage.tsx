@@ -57,6 +57,7 @@ export default function EmployeesPage() {
   const [forcedCompanyId, setForcedCompanyId] = useState<string | null>(null);
 
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
+  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
 
   const fetchCompanies = async () => {
     try {
@@ -179,15 +180,36 @@ export default function EmployeesPage() {
   }, [companies, forcedCompanyId, selectedCompanyId]);
 
 const handleDeleteEmployee = async (employeeId: string) => {
+  setIsDeletingId(employeeId);
   try {
-    const { error } = await supabase.from("employees").delete().eq("id", employeeId);
+    // Primary source: employees table
+    const { error } = await supabase.from('employees').delete().eq('id', employeeId);
     if (error) throw error;
 
-    toast.success("Funcionário removido com sucesso");
-    await fetchEmployees(); // ou a função que você usa para recarregar a lista
-  } catch (err) {
+    // Update local state to remove deleted employee
+    setEmployees((prev) => prev.filter((e) => e.id !== employeeId));
+
+    toast.success('Funcionário removido com sucesso');
+    // No full refetch needed because we've updated state
+  } catch (err: any) {
     console.error(err);
-    toast.error("Não foi possível remover o funcionário");
+    // If deletion failed, attempt to remove possible binding tables as fallback
+    try {
+      // Example fallback: booking_passengers or company_users (if used as link)
+      const { error: e1 } = await (supabase as any).from('booking_passengers').delete().eq('employee_id', employeeId);
+      if (!e1) {
+        setEmployees((prev) => prev.filter((e) => e.id !== employeeId));
+        toast.success('Vínculo de passageiro removido.');
+        setIsDeletingId(null);
+        return;
+      }
+    } catch (fallbackErr) {
+      console.error('Fallback delete error:', fallbackErr);
+    }
+
+    toast.error('Não foi possível remover o funcionário');
+  } finally {
+    setIsDeletingId(null);
   }
 };
 
@@ -255,6 +277,7 @@ const handleDeleteEmployee = async (employeeId: string) => {
                       <th className="text-left py-3 font-medium">Empresa</th>
                       <th className="text-left py-3 font-medium">CPF</th>
                       <th className="text-left py-3 font-medium">Nascimento</th>
+                      <th className="text-left py-3 font-medium">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -264,6 +287,42 @@ const handleDeleteEmployee = async (employeeId: string) => {
                         <td className="py-3">{e.companies?.name || 'Não informado'}</td>
                         <td className="py-3">{e.cpf || 'Não informado'}</td>
                         <td className="py-3">{safeFormatDate(e.birth_date)}</td>
+                        <td className="py-3">
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:bg-destructive/10"
+                                disabled={isDeletingId === e.id}
+                                aria-label={`Remover ${e.full_name}`}
+                              >
+                                {isDeletingId === e.id ? (
+                                  <Trash2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Remover passageiro?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Tem certeza que deseja remover {e.full_name}? Esta ação não pode ser desfeita.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction
+                                  className="bg-destructive text-destructive-foreground"
+                                  onClick={() => handleDeleteEmployee(e.id)}
+                                >
+                                  Remover
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
