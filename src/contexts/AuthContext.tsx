@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState, useRef } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -30,6 +30,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [appRole, setAppRole] = useState<AppRole | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Guard para evitar reentrância de loadRoleAndCompany
+  const loadingRoleRef = useRef<string | null>(null);
+
   const clearSupabaseStorage = () => {
     try {
       const keys: string[] = [];
@@ -59,49 +62,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAppRole(null);
   };
 
-  const withTimeout = async <T,>(p: Promise<T>, ms: number, label: string) => {
-    let t: number | undefined;
-    const timeout = new Promise<T>((_resolve, reject) => {
-      t = window.setTimeout(() => reject(new Error(`${label} timed out`)), ms);
-    });
-    try {
-      return await Promise.race([p, timeout]);
-    } finally {
-      if (t) window.clearTimeout(t);
-    }
-  };
-
+  /**
+   * Carrega role (admin/user) e company_id com retry leve.
+   * Não bloqueia o app se falhar - apenas registra warning e continua.
+   * Evita reentrância com useRef guard.
+   */
   const loadRoleAndCompany = async (userId: string) => {
-    try {
-      const adminPromise = supabase
-        .from("admin_users")
-        .select("user_id")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      const companyPromise = supabase
-        .from("company_users")
-        .select("company_id")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const [{ data: adminRow }, { data: cu }] = await withTimeout(
-        Promise.all([adminPromise, companyPromise]),
-        20000,
-        "loadRoleAndCompany"
+    // Evitar reentrância
+    if (loadingRoleRef.current === userId) {
+      console.warn(
+        `loadRoleAndCompany já em execução para ${userId}, ignorando chamada`
       );
+      return;
+    }
 
-      const admin = !!adminRow;
-      setIsAdmin(admin);
-      setAppRole(admin ? "admin" : "user");
-      setCompanyId(cu?.company_id ?? null);
+    loadingRoleRef.current = userId;
+
+    try {
+      let attempt = 1;
+      const maxAttempts = 2;
+      const delays = [500, 1500]; // ms entre tentativas
+
+      while (attempt <= maxAttempts) {
+        try {
+          const [adminRes, companyRes] = await Promise.all([
+            supabase
+              .from("admin_users")
+              .select("user_id")
+              .eq("user_id", userId)
+              .maybeSingle(),
+            supabase
+              .from("company_users")
+              .select("company_id")
+              .eq("user_id", userId)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+          ]);
+
+          const adminData = adminRes.data;
+          const companyData = companyRes.data;
+
+          const admin = !!adminData;
+          setIsAdmin(admin);
+          setAppRole(admin ? "admin" : "user");
+          setCompanyId(companyData?.company_id ?? null);
+
+          return; // Sucesso
+        } catch (e) {
+          if (attempt < maxAttempts) {
+            const delay = delays[attempt - 1];
+            console.warn(
+              `loadRoleAndCompany falhou na tentativa ${attempt}/${maxAttempts}, ` +
+                `retentando em ${delay}ms:`,
+              e
+            );
+            await new Promise((r) => setTimeout(r, delay));
+            attempt++;
+          } else {
+            throw e;
+          }
+        }
+      }
     } catch (e) {
-      console.error("Error loading role/company:", e);
+      // Se todas as tentativas falharem, registra warning mas mantém user logado
+      console.warn("loadRoleAndCompany falhou após múltiplas tentativas:", e);
       setIsAdmin(false);
       setCompanyId(null);
       setAppRole(null);
+      // App continua utilizável, user permanece autenticado
+    } finally {
+      loadingRoleRef.current = null;
     }
   };
 
@@ -109,19 +140,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const init = async () => {
       setIsLoading(true);
       try {
-        const { data, error } = await withTimeout(
-          supabase.auth.getSession(),
-          20000,
-          "getSession"
-        );
+        // Recupera sessão SEM Promise.race agressivo.
+        // Deixamos a promise natural, apenas protegendo com timeout 30s max como fallback.
+        let abortTimeoutId: number | undefined;
+        let timeoutOccurred = false;
+
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise<never>((_resolve, reject) => {
+          abortTimeoutId = window.setTimeout(() => {
+            timeoutOccurred = true;
+            reject(new Error("getSession: timeout de proteção 30s"));
+          }, 30000);
+        });
+
+        let sessionResult;
+        try {
+          sessionResult = await Promise.race([sessionPromise, timeoutPromise]);
+        } catch (e) {
+          if (timeoutOccurred) {
+            console.warn(
+              "Timeout na recuperação de sessão após 30s. " +
+                "Permitindo que o app continue, sessão será atualizada quando disponível."
+            );
+            // Não quebra o estado, apenas registra warning
+            sessionResult = { data: { session: null }, error: null };
+          } else {
+            throw e;
+          }
+        } finally {
+          if (abortTimeoutId !== undefined) {
+            window.clearTimeout(abortTimeoutId);
+          }
+        }
+
+        const { data, error } = sessionResult;
 
         if (error) {
           console.error("getSession error:", error);
-          await resetAuthState();
+          setUser(null);
+          setSession(null);
+          setIsAdmin(false);
+          setCompanyId(null);
+          setAppRole(null);
           return;
         }
 
-        const currentSession = data.session ?? null;
+        const currentSession = data?.session ?? null;
         setSession(currentSession);
         setUser(currentSession?.user ?? null);
 
@@ -133,27 +197,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setAppRole(null);
         }
       } catch (e) {
-        console.error("Auth init failed:", e);
-        // Timeout/instabilidade de rede não deve forçar logout nem exigir limpar cookies.
-        // Mantemos o app utilizável finalizando o loading e limpando o estado em memória.
+        console.error("Auth init falhou:", e);
+        // Mantém app utilizável - timeout/erro de rede não força logout
         setUser(null);
         setSession(null);
         setIsAdmin(false);
         setCompanyId(null);
         setAppRole(null);
       } finally {
+        // GARANTIDO: loading sempre completa
         setIsLoading(false);
       }
     };
 
     void init();
 
+    // Listener de mudanças de autenticação
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (_event, newSession) => {
         setSession(newSession);
         setUser(newSession?.user ?? null);
 
+        // Reset role/company ao trocar usuário
         if (newSession?.user?.id) {
+          setIsAdmin(false);
+          setCompanyId(null);
+          setAppRole(null);
+          // Recarrega role/company para novo usuário
           await loadRoleAndCompany(newSession.user.id);
         } else {
           setIsAdmin(false);
