@@ -154,86 +154,99 @@ function cleanCpf(v: string): string {
   return (v || "").replace(/\D/g, "");
 }
 
+// Utility: normalize CPF to digits-only string
+function normalizeCPF(cpf: string): string {
+  if (!cpf) return '';
+  return cpf.replace(/\D/g, '');
+}
+
+// Utility: quick heuristics to detect company-like names
+function looksLikeCompanyName(name: string): boolean {
+  if (!name) return false;
+  const clean = name
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toUpperCase();
+  const terms = ['LTDA', 'S/A', 'SA', 'ME', 'EPP', 'EIRELI', 'ADMINISTRACAO', 'ADMINISTRACAO', 'ADMINISTRACAO', 'HOLDING'];
+  for (const t of terms) {
+    if (clean.includes(t)) return true;
+  }
+  return false;
+}
+
 function extractPassengers(pageText: string): Passenger[] {
-  const passengers: Passenger[] = [];
+  // Rules:
+  // - Only parse the "Passageiros" block
+  // - Parse line-by-line; name before first comma; require CPF
+  // - Deduplicate by CPF using Map<cpf, Passenger>
 
-  // Normaliza para facilitar regex em blocos
-  const text = pageText
-    .replace(/\u00a0/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\r/g, "")
-    .trim();
+  const text = pageText.replace(/\u00a0/g, ' ').replace(/\r/g, '').trim();
 
-  const cpfRegex = /\bCPF\b[:\s]*([\d.\-]{11,14})/gi;
+  const secMatch = text.match(/Passageiros[:\s]*\d*\s*Adultos?/i) || text.match(/Passageiros\b/i);
+  if (!secMatch) return [];
 
-  const seen = new Set<string>();
-  let m: RegExpExecArray | null;
+  const startIdx = secMatch.index || 0;
+  const tail = text.slice(startIdx);
 
-  while ((m = cpfRegex.exec(text)) !== null) {
-    const cpf = cleanCpf(m[1] || "");
-    if (cpf.length !== 11) continue;
-    if (seen.has(cpf)) continue;
-
-    const idx = m.index;
-
-    // Janela ao redor do CPF para capturar nome e nascimento mesmo se estiverem em linhas separadas
-    const start = Math.max(0, idx - 300);
-    const end = Math.min(text.length, idx + 400);
-    const chunk = text.slice(start, end);
-
-    // Nome: pega a última sequência grande de letras antes do CPF
-    // (funciona bem quando o IDDAS imprime "NOME SOBRENOME ..." antes dos dados)
-    const nameCandidates = chunk
-      .slice(0, Math.min(chunk.length, idx - start))
-      .match(/[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{8,}/g);
-
-    const fullName = (nameCandidates?.[nameCandidates.length - 1] || "")
-      .replace(/\s{2,}/g, " ")
-      .trim();
-
-    // Nascimento: aceita "Nasc", "Nascimento" ou data solta perto do CPF
-    const birthMatch =
-      chunk.match(/\bNasc(?:imento)?\b[:\s]*([0-3]\d\/[01]\d\/\d{4})/i) ||
-      chunk.match(/\b([0-3]\d\/[01]\d\/\d{4})\b/);
-
-    const birthDate = birthMatch?.[1] ? toISODateFromBR(birthMatch[1]) : "";
-
-    // Email
-    const email =
-      (chunk.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "").trim();
-
-    // Telefone
-    const phoneMatch =
-      chunk.match(/\(\d{2}\)\s*\d{4,5}-\d{4}/) ||
-      chunk.match(/\b\d{2}\s*\d{4,5}-\d{4}\b/) ||
-      chunk.match(/\b\d{10,11}\b/);
-
-    const phone = (phoneMatch?.[0] || "").trim();
-
-    // Passaporte
-    const passport =
-      (chunk.match(/Passaporte[:\s]*([A-Z0-9]{5,})/i)?.[1] || "").trim();
-
-    if (!fullName || !birthDate) {
-      // Se faltar nome ou nascimento, não cadastra, mas já marca o CPF como visto para evitar loops
-      seen.add(cpf);
-      continue;
-    }
-
-    passengers.push({
-      fullName,
-      birthDate,
-      cpf,
-      phone,
-      email,
-      passport,
-      passportExpiry: "",
-    });
-
-    seen.add(cpf);
+  const lines = tail.split(/\n/);
+  const passengerLines: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) break;
+    if (/^(Hotel|Hospedagem|Voo|Voos|Pagamento|Total|Forma de pagamento)\b/i.test(line)) break;
+    passengerLines.push(line);
   }
 
-  return passengers;
+  // fallback: capture nearby lines with CPF if none found
+  const cpfLineRegex = /\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2}/;
+  if (passengerLines.length === 0) {
+    const nearby = tail.split(/\n/).slice(0, 20);
+    for (const l of nearby) if (cpfLineRegex.test(l)) passengerLines.push(l.trim());
+  }
+
+  const map = new Map<string, Passenger>();
+
+  for (const rawLine of passengerLines) {
+    const line = rawLine.replace(/\s{2,}/g, ' ').trim();
+    const firstComma = line.indexOf(',');
+    const nameCandidate = (firstComma >= 0 ? line.slice(0, firstComma) : line).trim();
+    if (!nameCandidate) continue;
+
+    if (/^Reservado por\b/i.test(nameCandidate)) continue; // ignore reservant
+    if (looksLikeCompanyName(nameCandidate)) continue;
+
+    const birthMatch = line.match(/(\d{2}\/\d{2}\/\d{4})/);
+    const birthDate = birthMatch ? toISODateFromBR(birthMatch[1]) : '';
+
+    const cpfMatch = line.match(/(\d{3}[\.\s]?\d{3}[\.\s]?\d{3}[-\s]?\d{2})/);
+    if (!cpfMatch) continue; // require CPF
+    const cpfDigits = normalizeCPF(cpfMatch[1]);
+    if (cpfDigits.length !== 11) continue;
+    if (map.has(cpfDigits)) continue; // dedupe by CPF (keep first)
+
+    const phoneMatch = line.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
+    const phone = phoneMatch ? phoneMatch[0].trim() : '';
+
+    const emailMatch = line.match(/\S+@\S+\.\S+/);
+    const email = emailMatch ? emailMatch[0].trim() : '';
+
+    const passportMatch = line.match(/Passaporte[:\s]*([A-Z0-9\-]+)/i);
+    const passport = passportMatch ? passportMatch[1].trim() : '';
+
+    const passenger: Passenger = {
+      fullName: nameCandidate,
+      birthDate: birthDate || '',
+      cpf: cpfDigits,
+      phone: phone || '',
+      email: email || '',
+      passport: passport || '',
+      passportExpiry: '',
+    };
+
+    map.set(cpfDigits, passenger);
+  }
+
+  return Array.from(map.values());
 }
 
 type ExtractedHotel = {
