@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { HotelCard } from '@/components/cards/HotelCard';
+import { CarRentalCard } from '@/components/cards/CarRentalCard';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +20,9 @@ type BookingRow = {
   total_paid: number | null;
   total_original: number | null;
   created_at: string;
+  flights?: any[];
+  hotels?: any[];
+  car_rentals?: any[];
 };
 
 export default function BookingDetailsPage() {
@@ -44,7 +49,7 @@ export default function BookingDetailsPage() {
       setLoading(true);
       const { data, error } = await supabase
         .from("bookings")
-        .select("id,name,company_id,source_url,total_paid,total_original,created_at")
+        .select("id,name,company_id,source_url,total_paid,total_original,created_at,flights,hotels,car_rentals")
         .eq("id", id)
         .single();
 
@@ -342,6 +347,70 @@ export default function BookingDetailsPage() {
                     "Salvar"
                   )}
                 </Button>
+              ) : null}
+
+              {/* Passengers Section (derived from flights/hotels) */}
+              {(() => {
+                const passList: any[] = [];
+                if (booking?.flights && booking.flights.length > 0) {
+                  for (const f of booking.flights) {
+                    if (f.passengerName) passList.push({ fullName: f.passengerName });
+                  }
+                }
+                if (passList.length === 0 && booking?.hotels && booking.hotels.length > 0) {
+                  for (const h of booking.hotels) {
+                    if ((h as any).guestName) passList.push({ fullName: (h as any).guestName });
+                  }
+                }
+                if (passList.length === 0) return null;
+                return (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Passageiros</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {passList.map((p: any, idx: number) => (
+                          <div key={p.fullName || idx} className="p-2 rounded border bg-background/50">
+                            <div className="font-medium">{p.fullName}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+
+              {/* Hotels Section */}
+              {booking?.hotels && booking.hotels.length > 0 ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Hospedagem</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 gap-4">
+                      {booking.hotels.map((h: any) => (
+                        <HotelCard key={h.id || h.locator || Math.random()} hotel={h} onDelete={isAdmin ? undefined : undefined} />
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {/* Car Rentals Section */}
+              {booking?.car_rentals && booking.car_rentals.length > 0 ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Aluguel de carro</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 gap-4">
+                      {booking.car_rentals.map((c: any) => (
+                        <CarRentalCard key={c.id || c.locator || Math.random()} carRental={c} onDelete={isAdmin ? undefined : undefined} />
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
               ) : null}
             </CardContent>
           </Card>

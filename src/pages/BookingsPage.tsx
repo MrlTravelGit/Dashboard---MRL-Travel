@@ -230,16 +230,31 @@ export default function BookingsPage() {
         const passengers: any[] = Array.isArray(payload.passengers) ? payload.passengers : Array.isArray(payload.passengers?.data) ? payload.passengers.data : [];
         const mainFromPassengers = passengers && passengers.length > 0 ? passengers[0].fullName : undefined;
 
-        setExtractedData(payload);
+        // Normalize payload to consistent keys expected by the UI and DB
+        const normalized = {
+          suggestedTitle: payload.suggestedTitle || payload.suggested_title || '',
+          mainPassengerName: payload.mainPassengerName || payload.main_passenger_name || '',
+          total: payload.total ?? null,
+          flights: Array.isArray(payload.flights) ? payload.flights : [],
+          passengers: passengers,
+          hotels: Array.isArray(payload.hotels) ? payload.hotels : [],
+          carRentals: Array.isArray(payload.carRentals)
+            ? payload.carRentals
+            : Array.isArray(payload.cars)
+            ? payload.cars
+            : [],
+        } as any;
+
+        setExtractedData(normalized);
         setFormData(prev => ({
           ...prev,
-          title: payload.suggestedTitle || payload.suggested_title || prev.title,
-          passengerName: mainFromPassengers ?? payload.mainPassengerName ?? payload.main_passenger_name ?? prev.passengerName,
+          title: normalized.suggestedTitle || prev.title,
+          passengerName: (normalized.passengers && normalized.passengers[0]?.fullName) ?? mainFromPassengers ?? normalized.mainPassengerName ?? prev.passengerName,
         }));
 
         toast({
           title: 'Dados extraídos!',
-          description: `Encontrado: ${ (payload.flights || []).length || 0 } voo(s), ${ (payload.hotels || []).length || 0 } hotel(is), ${ (payload.carRentals || payload.cars || []).length || 0 } carro(s)`,
+          description: `Encontrado: ${ (normalized.flights || []).length || 0 } voo(s), ${ (normalized.hotels || []).length || 0 } hotel(is), ${ (normalized.carRentals || []).length || 0 } carro(s)`,
         });
       } else {
         // If the invoke/fetch returned an explicit error payload, show it. Otherwise don't show an error toast.
@@ -255,13 +270,25 @@ export default function BookingsPage() {
           // No explicit error and no success flag — still accept partial payloads (e.g., only suggestedTitle)
           if (payload && Object.keys(payload).length > 0) {
             const passengers: any[] = Array.isArray(payload.passengers) ? payload.passengers : Array.isArray(payload.passengers?.data) ? payload.passengers.data : [];
-            const mainFromPassengers = passengers && passengers.length > 0 ? passengers[0].fullName : undefined;
+            const normalized = {
+              suggestedTitle: payload.suggestedTitle || payload.suggested_title || '',
+              mainPassengerName: payload.mainPassengerName || payload.main_passenger_name || '',
+              total: payload.total ?? null,
+              flights: Array.isArray(payload.flights) ? payload.flights : [],
+              passengers: passengers,
+              hotels: Array.isArray(payload.hotels) ? payload.hotels : [],
+              carRentals: Array.isArray(payload.carRentals)
+                ? payload.carRentals
+                : Array.isArray(payload.cars)
+                ? payload.cars
+                : [],
+            } as any;
 
-            setExtractedData(payload);
+            setExtractedData(normalized);
             setFormData(prev => ({
               ...prev,
-              title: payload.suggestedTitle || payload.suggested_title || prev.title,
-              passengerName: mainFromPassengers ?? payload.mainPassengerName ?? payload.main_passenger_name ?? prev.passengerName,
+              title: normalized.suggestedTitle || prev.title,
+              passengerName: (normalized.passengers && normalized.passengers[0]?.fullName) ?? normalized.mainPassengerName ?? prev.passengerName,
             }));
           }
         }
@@ -629,6 +656,47 @@ export default function BookingsPage() {
                             </div>
                           )}
 
+                          {/* Hotels Preview */}
+                          {extractedData.hotels?.length > 0 && (
+                            <div className="border-t pt-3 mt-2">
+                              <div className="text-xs font-medium text-foreground mb-2">Hospedagem Identificada</div>
+                              <div className="space-y-2">
+                                {extractedData.hotels.map((h: any, idx: number) => (
+                                  <div key={idx} className="p-2 rounded border bg-background/50 text-sm">
+                                    <div className="font-medium">{h.hotelName || h.name}</div>
+                                    <div className="text-muted-foreground text-xs mt-1">{h.city || ''}</div>
+                                    <div className="flex items-center gap-3 text-xs text-muted-foreground mt-2">
+                                      <div>Check-in: {h.checkIn || h.check_in || '-'}</div>
+                                      <div>Check-out: {h.checkOut || h.check_out || '-'}</div>
+                                    </div>
+                                    {h.confirmationCode && (
+                                      <div className="text-xs text-muted-foreground mt-1">Código: {h.confirmationCode}</div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Car Rentals Preview */}
+                          {extractedData.carRentals?.length > 0 && (
+                            <div className="border-t pt-3 mt-2">
+                              <div className="text-xs font-medium text-foreground mb-2">Aluguel de Carro Identificado</div>
+                              <div className="space-y-2">
+                                {extractedData.carRentals.map((c: any, idx: number) => (
+                                  <div key={idx} className="p-2 rounded border bg-background/50 text-sm">
+                                    <div className="font-medium">{c.company || c.locadora || 'Locadora'}</div>
+                                    <div className="text-muted-foreground text-xs mt-1">Retirada: {c.pickupDateTime || c.pickupDate || '-'}</div>
+                                    <div className="text-muted-foreground text-xs">Devolução: {c.dropoffDateTime || c.returnDate || '-'}</div>
+                                    {c.confirmationCode && (
+                                      <div className="text-xs text-muted-foreground mt-1">Código: {c.confirmationCode}</div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
                           {/* Passengers Preview */}
                           {extractedData.passengers?.length > 0 && (
                             <div className="border-t pt-3 mt-2">
@@ -793,6 +861,28 @@ export default function BookingsPage() {
                             </span>
                           )}
                         </div>
+
+                        {/* Passengers short list */}
+                        <div className="text-sm text-muted-foreground mt-1">
+                          <span className="font-medium">Passageiros: </span>
+                          {(() => {
+                            const names: string[] = [];
+                            // derive passenger names from booking data (flights.hotels)
+                            if (Array.isArray(booking.flights)) {
+                              for (const f of booking.flights) if (f.passengerName) names.push(f.passengerName);
+                            }
+                            if (names.length === 0 && Array.isArray(booking.hotels)) {
+                              for (const h of booking.hotels) if ((h as any).guestName) names.push((h as any).guestName);
+                            }
+                            const display = names.slice(0, 3);
+                            const rest = Math.max(0, names.length - display.length);
+                            return (
+                              <>
+                                {display.join(', ')}{rest > 0 ? ` +${rest}` : ''}
+                              </>
+                            );
+                          })()}
+                        </div>
                       </div>
                       
                       {/* Badges dos itens */}
@@ -898,6 +988,26 @@ export default function BookingsPage() {
                                 {travelDate}
                               </span>
                             )}
+                          </div>
+
+                          <div className="text-sm text-muted-foreground mt-2">
+                            <span className="font-medium">Passageiros: </span>
+                            {(() => {
+                              const names: string[] = [];
+                              if (Array.isArray(booking.flights)) {
+                                for (const f of booking.flights) if (f.passengerName) names.push(f.passengerName);
+                              }
+                              if (names.length === 0 && Array.isArray(booking.hotels)) {
+                                for (const h of booking.hotels) if ((h as any).guestName) names.push((h as any).guestName);
+                              }
+                              const display = names.slice(0, 3);
+                              const rest = Math.max(0, names.length - display.length);
+                              return (
+                                <>
+                                  {display.join(', ')}{rest > 0 ? ` +${rest}` : ''}
+                                </>
+                              );
+                            })()}
                           </div>
                           <div className="flex items-center gap-2 mt-2">
                             {booking.flights && booking.flights.length > 0 && (

@@ -236,6 +236,91 @@ function extractPassengers(pageText: string): Passenger[] {
   return passengers;
 }
 
+type ExtractedHotel = {
+  hotelName: string;
+  city?: string;
+  checkIn?: string;
+  checkOut?: string;
+  address?: string;
+  confirmationCode?: string;
+  total?: number | null;
+  passengers?: any[];
+};
+
+function matchAllHotels(pageText: string): ExtractedHotel[] {
+  const hotels: ExtractedHotel[] = [];
+  // Tenta encontrar blocos que contenham hotel/hospedagem
+  const hotelRegex = /(Hotel|Hospedagem)[:\s-]*([^\n\r]+)?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = hotelRegex.exec(pageText)) !== null) {
+    const blockStart = m.index;
+    const start = Math.max(0, blockStart - 200);
+    const end = Math.min(pageText.length, blockStart + 600);
+    const chunk = pageText.slice(start, end);
+
+    const name = (m[2] || '').trim();
+    const cityMatch = chunk.match(/Cidade[:\s]*([A-ZÀ-Ÿa-zà-ÿ\- ]{2,80})/i);
+    const checkIn = chunk.match(/Check[- ]?in[:\s]*([0-3]?\d\/[01]?\d\/[0-9]{4})/i)?.[1] || '';
+    const checkOut = chunk.match(/Check[- ]?out[:\s]*([0-3]?\d\/[01]?\d\/[0-9]{4})/i)?.[1] || '';
+    const confirm = chunk.match(/(Confirmação|Código|Reserva)[:\s]*([A-Z0-9\-]{4,20})/i)?.[2] || '';
+    const total = parseMoneyBRL(chunk) ?? null;
+
+    hotels.push({
+      hotelName: name || '',
+      city: cityMatch ? cityMatch[1].trim() : undefined,
+      checkIn: checkIn || undefined,
+      checkOut: checkOut || undefined,
+      confirmationCode: confirm || undefined,
+      total,
+      passengers: [],
+    });
+  }
+
+  return hotels;
+}
+
+type ExtractedCar = {
+  company?: string;
+  pickupLocation?: string;
+  pickupDateTime?: string;
+  dropoffLocation?: string;
+  dropoffDateTime?: string;
+  confirmationCode?: string;
+  category?: string;
+  driverName?: string;
+};
+
+function matchAllCars(pageText: string): ExtractedCar[] {
+  const cars: ExtractedCar[] = [];
+  // Procura por blocos que mencionem locadora/retirada/devolução
+  const carRegex = /(Locadora|Aluguel|Retirada|Devolu[cç][aã]o)[:\s-]*([^\n\r]+)?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = carRegex.exec(pageText)) !== null) {
+    const blockStart = m.index;
+    const start = Math.max(0, blockStart - 200);
+    const end = Math.min(pageText.length, blockStart + 600);
+    const chunk = pageText.slice(start, end);
+
+    const companyMatch = chunk.match(/Locadora[:\s]*([A-ZÀ-Ÿa-zà-ÿ0-9\- ]{2,80})/i);
+    const pickupMatch = chunk.match(/Retirada[:\s]*([0-3]?\d\/[01]?\d\/[0-9]{4}(?:\s+\d{2}:?\d{2})?)/i);
+    const dropoffMatch = chunk.match(/Devolu[cç][aã]o[:\s]*([0-3]?\d\/[01]?\d\/[0-9]{4}(?:\s+\d{2}:?\d{2})?)/i);
+    const confirm = chunk.match(/(Confirmação|Código)[:\s]*([A-Z0-9\-]{4,20})/i)?.[2] || '';
+    const category = chunk.match(/Categoria[:\s]*([A-Z0-9\- ]{2,40})/i)?.[1] || '';
+    const driver = chunk.match(/Motorista[:\s]*([A-ZÀ-Ÿa-zà-ÿ ]{2,80})/i)?.[1] || '';
+
+    cars.push({
+      company: companyMatch ? companyMatch[1].trim() : undefined,
+      pickupDateTime: pickupMatch ? pickupMatch[1].trim() : undefined,
+      dropoffDateTime: dropoffMatch ? dropoffMatch[1].trim() : undefined,
+      confirmationCode: confirm || undefined,
+      category: category || undefined,
+      driverName: driver || undefined,
+    });
+  }
+
+  return cars;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -276,22 +361,29 @@ serve(async (req) => {
     const mainPassengerName = extractMainPassengerName(pageText);
     const flights = matchAllFlights(pageText, mainPassengerName);
     const passengers = extractPassengers(pageText);
+    const hotels = matchAllHotels(pageText) || [];
+    const cars = matchAllCars(pageText) || [];
 
     const suggestedTitle =
       flights.length > 0
         ? `${flights[0].originCode} à ${flights[0].destinationCode} (${flights[0].departureDate || "sem data"})`
         : "Reserva (link)";
 
+    // Normalize response to always include hotels and cars arrays (never null)
+    const dataOut = {
+      total: total ?? null,
+      suggestedTitle,
+      mainPassengerName,
+      passengers,
+      flights,
+      hotels,
+      cars,
+    };
+
     return new Response(
       JSON.stringify({
         success: true,
-        data: {
-          total,
-          suggestedTitle,
-          mainPassengerName,
-          flights,
-          passengers,
-        },
+        data: dataOut,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
