@@ -226,11 +226,7 @@ export function BookingProvider({ children }: { children: ReactNode }) {
     // A partir de agora, empresas/usuários só visualizam.
     // Somente admin pode alterar nome/logo.
     if (!isAdmin) {
-      toast({
-        title: "Acesso negado",
-        description: "Somente administradores podem alterar nome e logo da empresa.",
-        variant: "destructive",
-      });
+      console.warn("Only admins can update company settings");
       return;
     }
 

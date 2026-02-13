@@ -23,6 +23,7 @@ type BookingRow = {
   flights?: any[];
   hotels?: any[];
   car_rentals?: any[];
+  passengers?: any[];
 };
 
 export default function BookingDetailsPage() {
@@ -49,7 +50,7 @@ export default function BookingDetailsPage() {
       setLoading(true);
       const { data, error } = await supabase
         .from("bookings")
-        .select("id,name,company_id,source_url,total_paid,total_original,created_at,flights,hotels,car_rentals")
+        .select("id,name,company_id,source_url,total_paid,total_original,created_at,flights,hotels,car_rentals,passengers" as any)
         .eq("id", id)
         .single();
 
@@ -63,7 +64,7 @@ export default function BookingDetailsPage() {
         return;
       }
 
-      const b = data as BookingRow;
+      const b = data as unknown as BookingRow;
       setBooking(b);
 
       setForm({
@@ -349,37 +350,27 @@ export default function BookingDetailsPage() {
                 </Button>
               ) : null}
 
-              {/* Passengers Section (derived from flights/hotels) */}
-              {(() => {
-                const passList: any[] = [];
-                if (booking?.flights && booking.flights.length > 0) {
-                  for (const f of booking.flights) {
-                    if (f.passengerName) passList.push({ fullName: f.passengerName });
-                  }
-                }
-                if (passList.length === 0 && booking?.hotels && booking.hotels.length > 0) {
-                  for (const h of booking.hotels) {
-                    if ((h as any).guestName) passList.push({ fullName: (h as any).guestName });
-                  }
-                }
-                if (passList.length === 0) return null;
-                return (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Passageiros</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {passList.map((p: any, idx: number) => (
-                          <div key={p.fullName || idx} className="p-2 rounded border bg-background/50">
-                            <div className="font-medium">{p.fullName}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })()}
+              {/* Passengers Section (from booking.passengers array) */}
+              {booking?.passengers && booking.passengers.length > 0 ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Passageiros</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {booking.passengers.map((p: any, idx: number) => (
+                        <div key={`${p.name}-${p.cpf || idx}`} className="p-3 rounded border bg-background/50 space-y-1">
+                          <div className="font-medium">{p.name}</div>
+                          {p.cpf && <div className="text-xs text-muted-foreground">CPF: {p.cpf}</div>}
+                          {p.birthDate && <div className="text-xs text-muted-foreground">Nasc: {p.birthDate}</div>}
+                          {p.phone && <div className="text-xs text-muted-foreground">Tel: {p.phone}</div>}
+                          {p.email && <div className="text-xs text-muted-foreground">Email: {p.email}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
 
               {/* Hotels Section */}
               {booking?.hotels && booking.hotels.length > 0 ? (

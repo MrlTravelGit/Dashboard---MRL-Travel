@@ -33,14 +33,10 @@ function inferAirline(block: string): "GOL" | "LATAM" | "AZUL" | "" {
   return "";
 }
 
-function extractMainPassengerName(pageText: string): string {
-  const m1 = pageText.match(/Reservado por\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{5,})/i);
-  if (m1?.[1]) return m1[1].trim();
-
-  const m2 = pageText.match(/([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{5,}),\s*\d{2}\/\d{2}\/\d{4},\s*CPF/i);
-  if (m2?.[1]) return m2[1].trim();
-
-  return "";
+// Extract "Reservado por" separately; should NOT be used as a passenger
+function extractReservedBy(pageText: string): string | null {
+  const m = pageText.match(/Reservado por\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{5,})/i);
+  return m?.[1]?.trim() || null;
 }
 
 type ExtractedFlight = {
@@ -102,7 +98,7 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
       block.match(/\b[A-Z0-9]{5,8}\b/)?.[0] ||
       "";
 
-    let airline = inferAirline(block);
+    let airline = inferAirline(block) as any;
     if (!airline && lastAirline) airline = lastAirline;
     if (airline) lastAirline = airline;
 
@@ -334,7 +330,7 @@ function matchAllCars(pageText: string): ExtractedCar[] {
   return cars;
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
@@ -371,9 +367,13 @@ serve(async (req) => {
     const pageText = normalizeText(rawText);
 
     const total = parseMoneyBRL(pageText);
-    const mainPassengerName = extractMainPassengerName(pageText);
-    const flights = matchAllFlights(pageText, mainPassengerName);
+    const reservedBy = extractReservedBy(pageText);
     const passengers = extractPassengers(pageText);
+    
+    // mainPassengerName is ALWAYS the first passenger real, otherwise empty
+    const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
+    
+    const flights = matchAllFlights(pageText, mainPassengerName);
     const hotels = matchAllHotels(pageText) || [];
     const cars = matchAllCars(pageText) || [];
 
@@ -469,11 +469,22 @@ serve(async (req) => {
     });
 
     // Normalize response to always include hotels and cars arrays (never null)
+    // Convert passengers to frontend-friendly format: { name, cpf?, birthDate?, phone?, email?, passport? }
+    const passengersOut = passengers.map(p => ({
+      name: p.fullName,
+      cpf: p.cpf || undefined,
+      birthDate: p.birthDate || undefined,
+      phone: p.phone || undefined,
+      email: p.email || undefined,
+      passport: p.passport || undefined,
+    }));
+
     const dataOut = {
       total: total ?? null,
       suggestedTitle,
       mainPassengerName,
-      passengers,
+      passengers: passengersOut,
+      reservedBy,
       flights,
       hotels: hotelsOut,
       cars,
@@ -486,7 +497,7 @@ serve(async (req) => {
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-  } catch (e) {
+  } catch (e: any) {
     return new Response(JSON.stringify({ success: false, error: e?.message || "Erro" }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

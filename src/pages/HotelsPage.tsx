@@ -1,22 +1,81 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useBooking } from '@/contexts/BookingContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HotelCard } from '@/components/cards/HotelCard';
 import { HotelForm } from '@/components/forms/HotelForm';
 import { Input } from '@/components/ui/input';
-import { Search } from 'lucide-react';
+import { Search, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
+
+interface HotelBooking {
+  id: string;
+  hotel_name: string;
+  confirmation_code?: string;
+  check_in?: string;
+  check_out?: string;
+  city?: string;
+  guests?: string;
+  total?: number;
+  locator?: string; // for compatibility with HotelCard
+  guestName?: string; // for compatibility with HotelCard
+}
 
 export default function HotelsPage() {
   const { hotels, deleteHotel } = useBooking();
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const [hotelBookings, setHotelBookings] = useState<HotelBooking[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadHotelBookings = async () => {
+      setLoading(true);
+      try {
+        // Use dynamic query to bypass type checking until migration is applied
+        const { data, error } = await (supabase.from('hotel_bookings') as any)
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          // Normalize hotel_bookings to be compatible with HotelCard
+          const normalized: HotelBooking[] = data.map(h => ({
+            id: h.id,
+            hotel_name: h.hotel_name,
+            confirmation_code: h.confirmation_code,
+            check_in: h.check_in,
+            check_out: h.check_out,
+            city: h.city,
+            guests: h.guests,
+            total: h.total,
+            locator: h.confirmation_code, // use confirmation_code as locator
+            guestName: h.guests, // use guests as guestName for display
+          }));
+          setHotelBookings(normalized);
+        }
+      } catch (err) {
+        console.error('Error loading hotel bookings (expected if migration not applied):', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadHotelBookings();
+  }, []);
 
   const filteredHotels = hotels.filter(hotel => {
     return (
       (hotel.locator || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (hotel.hotelName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (hotel.guestName || '').toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  });
+
+  const filteredHotelBookings = hotelBookings.filter(hotel => {
+    return (
+      (hotel.confirmation_code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (hotel.hotel_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (hotel.guests || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
   });
 
@@ -42,25 +101,57 @@ export default function HotelsPage() {
           />
         </div>
 
-        {/* Hotel List */}
-        {filteredHotels.length === 0 ? (
+        {/* Loading State */}
+        {loading ? (
           <div className="text-center py-12">
-            <p className="text-muted-foreground">
-              {searchTerm 
-                ? 'Nenhuma hospedagem encontrada com os filtros aplicados.' 
-                : 'Nenhuma hospedagem cadastrada ainda.'}
-            </p>
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3" />
+            <p className="text-muted-foreground">Carregando hospedagens...</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {filteredHotels.map((hotel) => (
-              <HotelCard
-                key={hotel.id}
-                hotel={hotel}
-                onDelete={isAdmin ? deleteHotel : undefined}
-              />
-            ))}
-          </div>
+          <>
+            {/* Hotel Bookings from hotel_bookings table */}
+            {filteredHotelBookings.length > 0 && (
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Hospedagens Cadastradas</h3>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {filteredHotelBookings.map((hotel) => (
+                    <HotelCard
+                      key={hotel.id}
+                      hotel={hotel as any}
+                      onDelete={undefined} // hotel_bookings don't have delete from HotelCard directly
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Hotels from bookings table (JSONB) */}
+            {filteredHotels.length > 0 && (
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Hospedagens Extraídas</h3>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {filteredHotels.map((hotel) => (
+                    <HotelCard
+                      key={hotel.id}
+                      hotel={hotel}
+                      onDelete={isAdmin ? deleteHotel : undefined}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Empty State */}
+            {filteredHotelBookings.length === 0 && filteredHotels.length === 0 && (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">
+                  {searchTerm 
+                    ? 'Nenhuma hospedagem encontrada com os filtros aplicados.' 
+                    : 'Nenhuma hospedagem cadastrada ainda.'}
+                </p>
+              </div>
+            )}
+          </>
         )}
       </div>
     </DashboardLayout>

@@ -29,6 +29,7 @@ interface BookingFromDB {
   flights: Flight[] | null;
   hotels: Hotel[] | null;
   car_rentals: CarRental[] | null;
+  passengers: any[] | null;
   total_paid: number | null;
   total_original: number | null;
   created_at: string;
@@ -68,11 +69,12 @@ export default function BookingsPage() {
       .order('created_at', { ascending: false });
 
     if (!error && data) {
-      const typedBookings: BookingFromDB[] = data.map(b => ({
+      const typedBookings: BookingFromDB[] = data.map((b: any) => ({
         ...b,
         flights: (b.flights as unknown as Flight[]) || [],
         hotels: (b.hotels as unknown as Hotel[]) || [],
         car_rentals: (b.car_rentals as unknown as CarRental[]) || [],
+        passengers: (b.passengers as unknown as any[]) || [],
       }));
       setBookings(typedBookings);
     }
@@ -362,33 +364,84 @@ export default function BookingsPage() {
     try {
       const { data: userData } = await supabase.auth.getUser();
       
-      // Create the booking
-      const { error } = await supabase.from('bookings').insert({
-        company_id: formData.companyId,
-        name: formData.title || 'Nova Reserva',
-        source_url: formData.url,
-        flights: extractedData.flights || [],
-        hotels: extractedData.hotels || [],
-        car_rentals: extractedData.carRentals || [],
-        total_paid: totalPaid,
-        total_original: totalOriginal,
-        created_by: userData.user?.id,
-      });
+      // Normalize passengers array from extracted data (use 'name' if available, else 'fullName')
+      const passengersToSave = (extractedData.passengers || []).map((p: any) => ({
+        name: p.name || p.fullName || '',
+        cpf: p.cpf,
+        birthDate: p.birthDate,
+        phone: p.phone,
+        email: p.email,
+        passport: p.passport,
+      }));
+
+      // Create the booking with passengers array
+      const { data: insertedBooking, error } = await supabase
+        .from('bookings')
+        .insert({
+          company_id: formData.companyId,
+          name: formData.title || 'Nova Reserva',
+          source_url: formData.url,
+          flights: extractedData.flights || [],
+          hotels: extractedData.hotels || [],
+          car_rentals: extractedData.carRentals || [],
+          passengers: passengersToSave,
+          total_paid: totalPaid,
+          total_original: totalOriginal,
+          created_by: userData.user?.id,
+        })
+        .select('id')
+        .single();
 
       if (error) throw error;
 
+      const bookingId = insertedBooking?.id;
+
+      // Auto-insert hotels into hotel_bookings table if extraction returned hotels
+      // NOTE: hotel_bookings table will be available after migration is applied
+      let hotelsInserted = 0;
+      if (bookingId && extractedData.hotels?.length > 0) {
+        const guestNames = passengersToSave.map((p: any) => p.name).filter(Boolean).join(', ');
+        
+        for (const hotel of extractedData.hotels) {
+          try {
+            // Use dynamic insert to bypass type checking until migration is applied
+            const { error: hotelError } = await (supabase.from('hotel_bookings') as any).insert({
+              booking_id: bookingId,
+              company_id: formData.companyId,
+              hotel_name: hotel.name || hotel.hotelName || '',
+              city: hotel.city || undefined,
+              address: hotel.address || undefined,
+              confirmation_code: hotel.confirmationCode || hotel.confirm || undefined,
+              check_in: hotel.checkIn ? new Date(hotel.checkIn.split('/').reverse().join('-')).toISOString().split('T')[0] : undefined,
+              check_out: hotel.checkOut ? new Date(hotel.checkOut.split('/').reverse().join('-')).toISOString().split('T')[0] : undefined,
+              guests: guestNames || undefined,
+              total: hotel.total || null,
+              created_by: userData.user?.id,
+            });
+
+            if (!hotelError) {
+              hotelsInserted++;
+            } else {
+              console.warn('Error creating hotel booking:', hotelError);
+            }
+          } catch (ex) {
+            console.warn('Hotel booking insert failed (may be expected if migration not applied):', ex);
+          }
+        }
+      }
+
       // Auto-register employees if option is enabled and passengers were extracted
       let employeesCreated = 0;
-      if (autoRegisterEmployees && extractedData.passengers?.length > 0) {
-        for (const passenger of extractedData.passengers) {
+      if (autoRegisterEmployees && passengersToSave?.length > 0) {
+        for (const passenger of passengersToSave) {
           // Only require name, CPF and birth date - phone, email and passport are optional
-          if (!passenger.fullName || !passenger.cpf || !passenger.birthDate) {
+          if (!passenger.name || !passenger.cpf || !passenger.birthDate) {
             continue; // Skip only if REQUIRED fields are missing
           }
 
           const cleanCpf = passenger.cpf.replace(/\D/g, '');
           if (cleanCpf.length !== 11) {
-            console.warn('Invalid CPF length for passenger:', passenger.fullName);
+            console.warn('Invalid CPF length for passenger:', passenger.name);
             continue;
           }
 
@@ -406,13 +459,12 @@ export default function BookingsPage() {
             
             const { error: empError } = await supabase.from('employees').insert({
               company_id: formData.companyId,
-              full_name: passenger.fullName,
+              full_name: passenger.name,
               cpf: cleanCpf,
               birth_date: passenger.birthDate,
               phone: phoneValue || 'Não informado',
               email: passenger.email || null,
               passport: passenger.passport || null,
-              passport_expiry: passenger.passportExpiry || null,
               created_by: userData.user?.id,
             });
 
@@ -426,10 +478,17 @@ export default function BookingsPage() {
       }
 
       const companyName = companies.find(c => c.id === formData.companyId)?.name || '';
-      const employeeMessage = employeesCreated > 0 ? ` ${employeesCreated} funcionário(s) cadastrado(s).` : '';
+      let descriptionMessage = `Reserva "${formData.title}" criada para ${companyName}.`;
+      if (employeesCreated > 0) {
+        descriptionMessage += ` ${employeesCreated} funcionário(s) cadastrado(s).`;
+      }
+      if (hotelsInserted > 0) {
+        descriptionMessage += ` ${hotelsInserted} hotel(is) adicionado(s).`;
+      }
+
       toast({
         title: 'Reserva cadastrada!',
-        description: `Reserva "${formData.title}" criada para ${companyName}.${employeeMessage}`,
+        description: descriptionMessage,
       });
       
       setOpen(false);
@@ -867,12 +926,18 @@ export default function BookingsPage() {
                           <span className="font-medium">Passageiros: </span>
                           {(() => {
                             const names: string[] = [];
-                            // derive passenger names from booking data (flights.hotels)
-                            if (Array.isArray(booking.flights)) {
-                              for (const f of booking.flights) if (f.passengerName) names.push(f.passengerName);
-                            }
-                            if (names.length === 0 && Array.isArray(booking.hotels)) {
-                              for (const h of booking.hotels) if ((h as any).guestName) names.push((h as any).guestName);
+                            // Use booking.passengers if available (stored in DB), otherwise fallback to flights/hotels
+                            if (Array.isArray(booking.passengers) && booking.passengers.length > 0) {
+                              for (const p of booking.passengers) if (p.name) names.push(p.name);
+                            } else {
+                              // Fallback: derive from flights
+                              if (Array.isArray(booking.flights)) {
+                                for (const f of booking.flights) if (f.passengerName) names.push(f.passengerName);
+                              }
+                              // If still empty, try hotels
+                              if (names.length === 0 && Array.isArray(booking.hotels)) {
+                                for (const h of booking.hotels) if ((h as any).guestName) names.push((h as any).guestName);
+                              }
                             }
                             const display = names.slice(0, 3);
                             const rest = Math.max(0, names.length - display.length);
