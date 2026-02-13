@@ -39,8 +39,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-
-// Admin-only route component
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { isAdmin, isLoading } = useAuth();
 
@@ -58,6 +56,8 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 
   return <>{children}</>;
 }
+
+
 
 // App routes with auth context available
 function AppRoutes() {
@@ -83,12 +83,23 @@ function AppRoutes() {
       <Route path="/voos" element={<ProtectedRoute><FlightsPage /></ProtectedRoute>} />
       <Route path="/hospedagens" element={<ProtectedRoute><HotelsPage /></ProtectedRoute>} />
       <Route path="/aluguel-carro" element={<ProtectedRoute><CarRentalsPage /></ProtectedRoute>} />
-      <Route path="/empresas" element={<ProtectedRoute><AdminRoute><CompaniesPage /></AdminRoute></ProtectedRoute>} />
+      <Route path="/empresas" element={<ProtectedRoute><CompaniesPage /></ProtectedRoute>} />
       <Route path="/funcionarios" element={<ProtectedRoute><EmployeesPage /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }
+
+<Route
+  path="/empresas"
+  element={
+    <ProtectedRoute>
+      <AdminRoute>
+        <CompaniesPage />
+      </AdminRoute>
+    </ProtectedRoute>
+  }
+/>
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

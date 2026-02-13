@@ -19,7 +19,7 @@ import { Plus, Search, Package, Plane, Building2, Car, LayoutGrid, LayoutList, L
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { Flight, Hotel, CarRental, Company } from '@/types/booking';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, SUPABASE_URL, SUPABASE_KEY } from '@/integrations/supabase/client';
 
 interface BookingFromDB {
   id: string;
@@ -154,26 +154,70 @@ export default function BookingsPage() {
       const isIddasLink = /agencia\.iddas\.com\.br\/reserva\//i.test(url);
       const functionName = isIddasLink ? 'extract-iddas-booking' : 'extract-booking-from-link';
 
-      const { data, error } = await supabase.functions.invoke(functionName, {
-        body: { url },
-        headers: authHeader,
-      });
+      // Helper: try supabase.functions.invoke with retries, then fallback to direct fetch
+      const invokeWithRetry = async (fnName: string, body: any, headers?: Record<string, string | undefined>, attempts = 3) => {
+        let lastError: any = null;
+        for (let i = 0; i < attempts; i++) {
+          try {
+            console.debug(`Invoking function ${fnName}, attempt ${i + 1}`);
+            const res = await supabase.functions.invoke(fnName, { body, headers });
+            // supabase returns { data, error }
+            if ((res as any).error) throw (res as any).error;
+            return (res as any).data;
+          } catch (err) {
+            console.warn(`Invoke attempt ${i + 1} failed for ${fnName}:`, err);
+            lastError = err;
+            // small backoff
+            await new Promise(r => setTimeout(r, 200 * (i + 1)));
+          }
+        }
+
+        // Fallback: try direct fetch to Functions HTTP endpoint
+        try {
+          const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/${fnName}`;
+          const fetchHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          // Prefer Authorization from session, otherwise use anon/publishable key
+          if (headers?.Authorization) fetchHeaders.Authorization = headers.Authorization as string;
+          else if (SUPABASE_KEY) fetchHeaders.apikey = SUPABASE_KEY;
+
+          console.debug('Fallback fetch to', endpoint);
+          const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: fetchHeaders,
+            body: JSON.stringify(body),
+          });
+
+          const text = await resp.text();
+          let parsed: any = null;
+          try { parsed = JSON.parse(text); } catch (_) { parsed = text; }
+
+          if (!resp.ok) {
+            const err = new Error(`Function fetch failed with status ${resp.status}`);
+            (err as any).status = resp.status;
+            (err as any).body = parsed;
+            throw err;
+          }
+
+          return parsed;
+        } catch (fallbackErr) {
+          (fallbackErr as any).original = lastError;
+          throw fallbackErr;
+        }
+      };
+
+      const { data, error } = await invokeWithRetry(functionName, { url }, authHeader);
 
       if (error) throw error;
 
-      if (data.success && data.data) {
+      if (data?.success && data.data) {
         setExtractedData(data.data);
-        setFormData(prev => {
-          const firstPassenger =
-            (Array.isArray(data.data.passengers) && data.data.passengers[0]?.fullName) ||
-            (Array.isArray(data.data.passengers) && data.data.passengers[0]?.name) ||
-            '';
-          return {
-            ...prev,
-            title: data.data.suggestedTitle || '',
-            passengerName: firstPassenger || data.data.mainPassengerName || '',
-          };
-        });
+        setFormData(prev => ({
+          ...prev,
+          title: data.data.suggestedTitle || '',
+          passengerName: data.data.mainPassengerName || '',
+        }));
         toast({
           title: 'Dados extraídos!',
           description: `Encontrado: ${data.data.flights?.length || 0} voo(s), ${data.data.hotels?.length || 0} hotel(is), ${data.data.carRentals?.length || 0} carro(s)`,
@@ -186,7 +230,18 @@ export default function BookingsPage() {
         });
       }
     } catch (error: any) {
-      console.error('Extract error:', error);
+      try {
+        console.error('Extract error:', error);
+        console.error('Extract error (full):', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+        if ((error as any)?.body) {
+          console.error('Extract error body:', (error as any).body);
+        }
+        if ((error as any)?.original) {
+          console.error('Extract original error:', (error as any).original);
+        }
+      } catch (logErr) {
+        console.error('Error while logging extract error details:', logErr);
+      }
       toast({
         title: 'Erro',
         description: error.message || 'Erro ao extrair dados do link.',
@@ -239,6 +294,7 @@ export default function BookingsPage() {
       return;
     }
 
+    
     try {
       const { data: userData } = await supabase.auth.getUser();
       

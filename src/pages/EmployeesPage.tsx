@@ -124,22 +124,6 @@ export default function EmployeesPage() {
     }
   };
 
-
-  const handleDeleteEmployee = async (employeeId: string) => {
-    try {
-      const { error } = await supabase.from('employees').delete().eq('id', employeeId);
-      if (error) throw error;
-
-      toast.success('Funcionário removido com sucesso.');
-
-      const effectiveCompanyId = forcedCompanyId || (isAdmin ? (selectedCompanyId || null) : null);
-      await fetchEmployees(effectiveCompanyId);
-    } catch (e: any) {
-      console.error(e);
-      toast.error('Não foi possível remover o funcionário.');
-    }
-  };
-
   useEffect(() => {
     const init = async () => {
       setIsLoading(true);
@@ -193,6 +177,19 @@ export default function EmployeesPage() {
     const c = companies.find((x) => x.id === idToShow);
     return c?.name || 'Empresa';
   }, [companies, forcedCompanyId, selectedCompanyId]);
+
+const handleDeleteEmployee = async (employeeId: string) => {
+  try {
+    const { error } = await supabase.from("employees").delete().eq("id", employeeId);
+    if (error) throw error;
+
+    toast.success("Funcionário removido com sucesso");
+    await fetchEmployees(); // ou a função que você usa para recarregar a lista
+  } catch (err) {
+    console.error(err);
+    toast.error("Não foi possível remover o funcionário");
+  }
+};
 
   return (
     <DashboardLayout>
@@ -258,7 +255,6 @@ export default function EmployeesPage() {
                       <th className="text-left py-3 font-medium">Empresa</th>
                       <th className="text-left py-3 font-medium">CPF</th>
                       <th className="text-left py-3 font-medium">Nascimento</th>
-                      <th className="text-left py-3 font-medium">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -268,31 +264,6 @@ export default function EmployeesPage() {
                         <td className="py-3">{e.companies?.name || 'Não informado'}</td>
                         <td className="py-3">{e.cpf || 'Não informado'}</td>
                         <td className="py-3">{safeFormatDate(e.birth_date)}</td>
-                        <td className="py-3">
-                          {(isAdmin || (!forcedCompanyId || e.company_id === forcedCompanyId)) ? (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="icon" title="Remover funcionário">
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Remover funcionário</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Essa ação remove o funcionário da empresa. Você tem certeza?
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => handleDeleteEmployee(e.id)}>
-                                    Remover
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          ) : null}
-                        </td>
                       </tr>
                     ))}
                   </tbody>
