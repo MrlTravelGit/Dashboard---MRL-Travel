@@ -207,27 +207,64 @@ export default function BookingsPage() {
         }
       };
 
-      const { data, error } = await invokeWithRetry(functionName, { url }, authHeader);
+      // invokeWithRetry returns the parsed response (or throws on network/fetch errors)
+      const result = await invokeWithRetry(functionName, { url }, authHeader);
 
-      if (error) throw error;
+      if (import.meta.env.DEV) {
+        console.log('[EXTRACT] raw result', result);
+      }
 
-      if (data?.success && data.data) {
-        setExtractedData(data.data);
+      // Normalize payload from two possible shapes:
+      // A) { success: true, data: { ... } }
+      // B) { success: true, suggestedTitle, mainPassengerName, passengers?, flights?, hotels?, cars? }
+      const payload: any = (result?.data?.data ?? result?.data) || result || {};
+
+      if (import.meta.env.DEV) {
+        console.log('[EXTRACT] payload', payload);
+      }
+
+      const success = (result?.data?.success === true) || (payload?.success === true) || (result?.success === true);
+
+      if (success) {
+        // Prefer passengers[0].fullName as main passenger when available
+        const passengers: any[] = Array.isArray(payload.passengers) ? payload.passengers : Array.isArray(payload.passengers?.data) ? payload.passengers.data : [];
+        const mainFromPassengers = passengers && passengers.length > 0 ? passengers[0].fullName : undefined;
+
+        setExtractedData(payload);
         setFormData(prev => ({
           ...prev,
-          title: data.data.suggestedTitle || '',
-          passengerName: data.data.mainPassengerName || '',
+          title: payload.suggestedTitle || payload.suggested_title || prev.title,
+          passengerName: mainFromPassengers ?? payload.mainPassengerName ?? payload.main_passenger_name ?? prev.passengerName,
         }));
+
         toast({
           title: 'Dados extraídos!',
-          description: `Encontrado: ${data.data.flights?.length || 0} voo(s), ${data.data.hotels?.length || 0} hotel(is), ${data.data.carRentals?.length || 0} carro(s)`,
+          description: `Encontrado: ${ (payload.flights || []).length || 0 } voo(s), ${ (payload.hotels || []).length || 0 } hotel(is), ${ (payload.carRentals || payload.cars || []).length || 0 } carro(s)`,
         });
       } else {
-        toast({
-          title: 'Erro na extração',
-          description: data.error || 'Não foi possível extrair os dados.',
-          variant: 'destructive',
-        });
+        // If the invoke/fetch returned an explicit error payload, show it. Otherwise don't show an error toast.
+        const explicitError = result?.error || result?.data?.error || payload?.error;
+        if (explicitError) {
+          console.error('Extract function returned error:', explicitError);
+          toast({
+            title: 'Erro na extração',
+            description: explicitError?.message || String(explicitError),
+            variant: 'destructive',
+          });
+        } else {
+          // No explicit error and no success flag — still accept partial payloads (e.g., only suggestedTitle)
+          if (payload && Object.keys(payload).length > 0) {
+            const passengers: any[] = Array.isArray(payload.passengers) ? payload.passengers : Array.isArray(payload.passengers?.data) ? payload.passengers.data : [];
+            const mainFromPassengers = passengers && passengers.length > 0 ? passengers[0].fullName : undefined;
+
+            setExtractedData(payload);
+            setFormData(prev => ({
+              ...prev,
+              title: payload.suggestedTitle || payload.suggested_title || prev.title,
+              passengerName: mainFromPassengers ?? payload.mainPassengerName ?? payload.main_passenger_name ?? prev.passengerName,
+            }));
+          }
+        }
       }
     } catch (error: any) {
       try {
