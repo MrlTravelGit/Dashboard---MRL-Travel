@@ -227,9 +227,67 @@ export default function BookingsPage() {
 
       const success = (result?.data?.success === true) || (payload?.success === true) || (result?.success === true);
 
+      const normalizeCpfDigits = (cpfRaw: any) => String(cpfRaw ?? '').replace(/\D/g, '');
+
+      const looksLikeCompanyName = (nameRaw: any) => {
+        const name = String(nameRaw ?? '').trim();
+        if (!name) return false;
+        const upper = name.toUpperCase();
+        if (upper.startsWith('RESERVADO POR')) return true;
+
+        const companyTokens = [
+          'LTDA',
+          'LTD',
+          'EIRELI',
+          'ME',
+          'EPP',
+          'S/A',
+          'SA',
+          'ADMINISTRACAO',
+          'ADMINISTRAÇÃO',
+          'HOLDING',
+        ];
+        return companyTokens.some((t) => upper.includes(t));
+      };
+
+      const getPassengerName = (p: any) => {
+        const raw = p?.fullName ?? p?.full_name ?? p?.name ?? p?.nome ?? p?.passengerName ?? p?.passenger_name ?? '';
+        return String(raw ?? '').replace(/^\s*(Reservado\s+por)\s+/i, '').trim();
+      };
+
+      const normalizePassengers = (rawPassengers: any[]) => {
+        const out: any[] = [];
+        const seen = new Set<string>();
+
+        for (const p of rawPassengers || []) {
+          const fullName = getPassengerName(p);
+          const cpfDigits = normalizeCpfDigits(p?.cpf);
+
+          // Ignora entradas vazias
+          if (!fullName && !cpfDigits) continue;
+
+          // Ignora empresa quando não há CPF válido
+          if (looksLikeCompanyName(fullName) && cpfDigits.length !== 11) continue;
+
+          const key = cpfDigits.length === 11 ? `cpf:${cpfDigits}` : `name:${fullName.toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          out.push({
+            ...p,
+            fullName,
+            name: p?.name ?? fullName,
+            cpf: p?.cpf ?? cpfDigits,
+          });
+        }
+
+        return out;
+      };
+
       if (success) {
         // Prefer passengers[0].fullName as main passenger when available
-        const passengers: any[] = Array.isArray(payload.passengers) ? payload.passengers : Array.isArray(payload.passengers?.data) ? payload.passengers.data : [];
+        const passengersRaw: any[] = Array.isArray(payload.passengers) ? payload.passengers : Array.isArray(payload.passengers?.data) ? payload.passengers.data : [];
+        const passengers = normalizePassengers(passengersRaw);
         const mainFromPassengers = passengers && passengers.length > 0 ? passengers[0].fullName : undefined;
 
         // Normalize payload to consistent keys expected by the UI and DB
@@ -251,7 +309,7 @@ export default function BookingsPage() {
         setFormData(prev => ({
           ...prev,
           title: normalized.suggestedTitle || prev.title,
-          passengerName: (normalized.passengers && normalized.passengers[0]?.fullName) ?? mainFromPassengers ?? normalized.mainPassengerName ?? prev.passengerName,
+          passengerName: (normalized.passengers && (normalized.passengers[0]?.fullName || normalized.passengers[0]?.name)) ?? mainFromPassengers ?? normalized.mainPassengerName ?? prev.passengerName,
         }));
 
         toast({
@@ -271,7 +329,8 @@ export default function BookingsPage() {
         } else {
           // No explicit error and no success flag — still accept partial payloads (e.g., only suggestedTitle)
           if (payload && Object.keys(payload).length > 0) {
-            const passengers: any[] = Array.isArray(payload.passengers) ? payload.passengers : Array.isArray(payload.passengers?.data) ? payload.passengers.data : [];
+            const passengersRaw: any[] = Array.isArray(payload.passengers) ? payload.passengers : Array.isArray(payload.passengers?.data) ? payload.passengers.data : [];
+            const passengers = normalizePassengers(passengersRaw);
             const normalized = {
               suggestedTitle: payload.suggestedTitle || payload.suggested_title || '',
               mainPassengerName: payload.mainPassengerName || payload.main_passenger_name || '',
@@ -290,7 +349,7 @@ export default function BookingsPage() {
             setFormData(prev => ({
               ...prev,
               title: normalized.suggestedTitle || prev.title,
-              passengerName: (normalized.passengers && normalized.passengers[0]?.fullName) ?? normalized.mainPassengerName ?? prev.passengerName,
+              passengerName: (normalized.passengers && (normalized.passengers[0]?.fullName || normalized.passengers[0]?.name)) ?? normalized.mainPassengerName ?? prev.passengerName,
             }));
           }
         }
@@ -776,7 +835,7 @@ export default function BookingsPage() {
                               <div className="space-y-1">
                                 {extractedData.passengers.map((p: any, i: number) => (
                                   <div key={i} className="text-xs bg-background/50 p-2 rounded border">
-                                    <div className="font-medium text-foreground">{p.fullName}</div>
+                                    <div className="font-medium text-foreground">{(p.fullName || p.name || '').trim() ? (p.fullName || p.name) : 'Nome não identificado'}</div>
                                     <div className="text-muted-foreground flex flex-wrap gap-2 mt-1">
                                       {p.cpf && <span>CPF: {p.cpf}</span>}
                                       {p.birthDate && <span>Nasc: {new Date(p.birthDate).toLocaleDateString('pt-BR')}</span>}
