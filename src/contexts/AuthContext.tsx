@@ -67,19 +67,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Carrega role (admin/user) e company_id com retry e fallback inteligente.
-   * - Busca em user_roles (fonte primária)
-   * - Se falhar: mantém estado anterior (NÃO força fallback para "user")
+   * Carrega admin status a partir da tabela admin_users.
+   * - Busca em admin_users (user_id) para verificar se é admin
    * - Retry 2x com delays progressivos se falhar por rede/timeout
-   * - Evita reentrância com useRef guard
-   * - Sem chamadas a Edge Functions (evita 404 em produção)
+   * - NÃO seta isAdmin=false por erro - mantém estado anterior
+   * - Só seta isAdmin=false quando a query retorna null explicitamente
+   * - Carrega company_id de company_users em paralelo
    */
-  const loadRoleAndCompany = async (userId: string) => {
+  const loadAdminStatus = async (userId: string) => {
     // Evitar reentrância
     if (loadingRoleRef.current === userId) {
       if (isDev) {
         console.warn(
-          `[AUTH] loadRoleAndCompany já em execução para ${userId}, ignorando chamada`
+          `[AUTH] loadAdminStatus já em execução para ${userId}, ignorando chamada`
         );
       }
       return;
@@ -88,7 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadingRoleRef.current = userId;
     setIsLoadingRole(true);
 
-    let loadedRole: AppRole | null = null;
+    let isAdminValue = false;
     let loadedCompanyId: string | null = null;
     let lastError: Error | null = null;
 
@@ -97,93 +97,78 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const maxAttempts = 2;
       const delays = [500, 1500]; // ms entre tentativas
 
-      while (attempt <= maxAttempts && !loadedRole) {
+      while (attempt <= maxAttempts) {
         try {
           if (isDev) {
-            console.log(`[AUTH] loadRoleAndCompany tentativa ${attempt}/${maxAttempts}`);
+            console.log(`[AUTH] loadAdminStatus tentativa ${attempt}/${maxAttempts}`);
           }
 
-          // Query 1: Buscar role na tabela user_roles (fonte primária)
-          const roleRes = await supabase
-            .from("user_roles")
-            .select("role")
+          // Query: Buscar se user_id existe em admin_users
+          // Usando type casting (as any) pois admin_users pode ser tabela custom
+          const adminRes = await supabase
+            .from("admin_users" as any)
+            .select("user_id")
             .eq("user_id", userId)
-            .maybeSingle();
+            .maybeSingle() as any;
 
-          if (roleRes.error) {
-            if (roleRes.error.code === "PGRST116") {
-              // Sem dados - não é erro crítico, mas user não tem role definida
+          // Se houve erro (RLS, connection, etc)
+          if (adminRes.error) {
+            if (adminRes.error.code === "PGRST116") {
+              // Sem dados - user não é admin (esperado para maioria dos usuários)
+              isAdminValue = false;
               if (isDev) {
-                console.log(`[AUTH] user_roles: sem dados para user ${userId}`);
+                console.log(`[AUTH] userId não encontrado em admin_users: ${userId}`);
               }
-              lastError = new Error("Nenhuma role encontrada para este usuário");
             } else {
-              // Erro real (RLS, connection, etc)
-              lastError = new Error(`user_roles query error: ${roleRes.error.message}`);
+              // Erro real (RLS, connection, etc) - não é dado vazio
+              lastError = new Error(`admin_users query error: ${adminRes.error.message}`);
               if (isDev) {
-                console.error(`[AUTH] user_roles error:`, roleRes.error);
+                console.error(`[AUTH] admin_users error:`, adminRes.error);
               }
+              // Não seta isAdmin - mantém estado anterior
+              throw lastError;
             }
-          } else if (roleRes.data?.role) {
-            loadedRole = roleRes.data.role as AppRole;
+          } else if (adminRes.data) {
+            // user_id encontrado - é admin
+            isAdminValue = true;
             if (isDev) {
-              console.log(`[AUTH] role encontrada em user_roles: ${loadedRole}`);
+              console.log(`[AUTH] userId encontrado em admin_users: ${userId}`);
             }
-
-            // Query 2: Buscar company_id (primeira empresa associada)
-            try {
-              const companyRes = await supabase
-                .from("company_users")
-                .select("company_id")
-                .eq("user_id", userId)
-                .order("created_at", { ascending: false })
-                .limit(1)
-                .maybeSingle();
-
-              if (companyRes.data?.company_id) {
-                loadedCompanyId = companyRes.data.company_id;
-                if (isDev) {
-                  console.log(
-                    `[AUTH] companyId encontrado em company_users: ${loadedCompanyId}`
-                  );
-                }
-              } else if (isDev && companyRes.error?.code !== "PGRST116") {
-                console.warn(`[AUTH] company_users error:`, companyRes.error);
-              }
-            } catch (e) {
-              if (isDev) {
-                console.error(`[AUTH] company_users exception:`, e);
-              }
-              // Não é crítico se company_id não carregar
+          } else {
+            // Sem dados e sem erro - user não é admin
+            isAdminValue = false;
+            if (isDev) {
+              console.log(`[AUTH] userId não é admin: ${userId}`);
             }
           }
 
-          // Se conseguiu carregar a role, sai do loop de retry
-          if (loadedRole) {
+          // Se conseguiu obter resultado claro (com ou sem erro PGRST116), sai do loop
+          if (!lastError || (lastError && lastError.message.includes("PGRST116"))) {
+            // Query bem-sucedida ou sem dados (esperado)
+            lastError = null; // Limpa o erro PGRST116 pois é esperado
             break;
           }
 
-          // Se não conseguiu, tenta novamente
+          // Se erro real, tenta novamente
           if (attempt < maxAttempts) {
             const delay = delays[attempt - 1];
             if (isDev) {
               console.warn(
-                `[AUTH] Role não carregada na tentativa ${attempt}/${maxAttempts}, ` +
+                `[AUTH] loadAdminStatus falhou na tentativa ${attempt}/${maxAttempts}, ` +
                   `retentando em ${delay}ms`
               );
             }
             await new Promise((r) => setTimeout(r, delay));
             attempt++;
           } else {
-            // Saiu do loop sem conseguir
-            throw lastError || new Error("Role não foi carregada após múltiplas tentativas");
+            throw lastError || new Error("Não foi possível carregar status de admin");
           }
         } catch (e) {
           if (attempt < maxAttempts) {
             const delay = delays[attempt - 1];
             if (isDev) {
               console.warn(
-                `[AUTH] loadRoleAndCompany falhou na tentativa ${attempt}/${maxAttempts}, ` +
+                `[AUTH] loadAdminStatus falhou na tentativa ${attempt}/${maxAttempts}, ` +
                   `retentando em ${delay}ms:`,
                 e
               );
@@ -191,42 +176,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await new Promise((r) => setTimeout(r, delay));
             attempt++;
           } else {
-            throw e;
+            // Saiu do loop - mantem erro anterior, não força false
+            if (isDev) {
+              console.error(`[AUTH] loadAdminStatus falhou após múltiplas tentativas:`, e);
+            }
+            // NÃO seta isAdmin para false - apenas registra erro
           }
         }
       }
 
-      // Se carregou a role com sucesso, atualiza estado
-      if (loadedRole) {
-        setAppRole(loadedRole);
-        setIsAdmin(loadedRole === "admin");
-        setCompanyId(loadedCompanyId);
+      // Se conseguiu carregar com sucesso, atualiza estado
+      if (!lastError) {
+        setIsAdmin(isAdminValue);
+        setAppRole(isAdminValue ? "admin" : "user");
 
         if (isDev) {
-          console.log(
-            `[AUTH] role=${loadedRole}, isAdmin=${loadedRole === "admin"}, companyId=${loadedCompanyId}`
-          );
+          console.log(`[AUTH] userId=${userId}, isAdmin=${isAdminValue}`);
+        }
+
+        // Carrega company_id (secundário)
+        try {
+          const companyRes = await supabase
+            .from("company_users")
+            .select("company_id")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (companyRes.data?.company_id) {
+            loadedCompanyId = companyRes.data.company_id;
+            setCompanyId(loadedCompanyId);
+            if (isDev) {
+              console.log(`[AUTH] companyId encontrado: ${loadedCompanyId}`);
+            }
+          }
+        } catch (e) {
+          if (isDev) {
+            console.warn(`[AUTH] company_users error:`, e);
+          }
+          // Não é crítico se company_id não carregar
         }
       } else {
-        // Não conseguiu carregar - mantém estado anterior (não força "user")
+        // Erro - não atualiza isAdmin, mantém estado anterior
         if (isDev) {
-          console.error(
-            `[AUTH] loadRoleAndCompany falhou após múltiplas tentativas:`,
-            lastError
-          );
+          console.error(`[AUTH] loadAdminStatus erro, mantendo estado anterior:`, lastError);
         }
-        // NÃO fazemos fallback automático para "user"
-        // Mantemos appRole como null até conseguir carregar
       }
     } catch (e) {
-      // Erro não esperado - log completo
+      // Erro não esperado
       if (isDev) {
-        console.error(
-          `[AUTH] loadRoleAndCompany erro inesperado:`,
-          e
-        );
+        console.error(`[AUTH] loadAdminStatus erro inesperado:`, e);
       }
-      // NÃO força fallback - mantém estado anterior
+      // NÃO força fallback
     } finally {
       loadingRoleRef.current = null;
       setIsLoadingRole(false);
@@ -301,15 +303,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(currentSession?.user ?? null);
 
         if (isDev) {
-          console.log("[AUTH] user:", currentSession?.user?.id);
+          console.log("[AUTH] userId:", currentSession?.user?.id);
         }
 
-        // Libera loading - UI não fica travada enquanto role é carregada
+        // Libera loading - UI não fica travada enquanto admin status é carregado
         setIsLoading(false);
 
-        // SEMPRE carrega role/company após obter a sessão
+        // SEMPRE carrega admin status após obter a sessão
         if (currentSession?.user?.id) {
-          await loadRoleAndCompany(currentSession.user.id);
+          await loadAdminStatus(currentSession.user.id);
         } else {
           // Sem usuário autenticado, reseta estado
           setIsAdmin(false);
@@ -343,16 +345,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(newSession?.user ?? null);
 
         if (isDev) {
-          console.log("[AUTH] user:", newSession?.user?.id);
+          console.log("[AUTH] userId:", newSession?.user?.id);
         }
 
-        // Reset role/company ao trocar usuário
+        // Reset admin status ao trocar usuário
         if (newSession?.user?.id) {
           setIsAdmin(false);
           setCompanyId(null);
           setAppRole(null);
-          // Recarrega role/company para novo usuário
-          await loadRoleAndCompany(newSession.user.id);
+          // Recarrega admin status para novo usuário
+          await loadAdminStatus(newSession.user.id);
         } else {
           // Logout
           setIsAdmin(false);
