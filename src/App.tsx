@@ -20,10 +20,11 @@ import { Loader2 } from "lucide-react";
 
 const queryClient = new QueryClient();
 
-// Protected route component
+// Protected route component - bloqueia se não autenticado
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isLoadingRole } = useAuth();
 
+  // Aguarda carregar session e role
   if (isLoading || isLoadingRole) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -39,11 +40,14 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Admin route component - bloqueia se não é admin
+// Aguarda role estar carregada antes de redirecionar
 function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { isAdmin, isLoading, isLoadingRole } = useAuth();
+  const { isAdmin, appRole, isLoadingRole } = useAuth();
 
-  // Não redirecionar enquanto role está sendo carregada
-  if (isLoading || isLoadingRole) {
+  // Aguarda role estar carregada
+  // NÃO redireciona enquanto role está carregando
+  if (isLoadingRole) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -51,7 +55,10 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!isAdmin) {
+  // Após role estar carregada, verifica se é admin
+  // isAdmin pode ser false ou appRole pode ser null - em ambos os casos, bloqueia
+  const isUserAdmin = isAdmin || appRole === "admin";
+  if (!isUserAdmin) {
     return <Navigate to="/" replace />;
   }
 

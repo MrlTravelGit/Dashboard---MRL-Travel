@@ -67,11 +67,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Carrega role (admin/user) e company_id com retry leve.
-   * Não bloqueia o app se falhar - apenas registra warning e continua.
-   * Evita reentrância com useRef guard.
-   * 
-   * Utiliza a tabela user_roles para obter a role corretamente.
+   * Carrega role (admin/user) e company_id com retry e fallback inteligente.
+   * - Busca em user_roles (fonte primária)
+   * - Se falhar: mantém estado anterior (NÃO força fallback para "user")
+   * - Retry 2x com delays progressivos se falhar por rede/timeout
+   * - Evita reentrância com useRef guard
+   * - Sem chamadas a Edge Functions (evita 404 em produção)
    */
   const loadRoleAndCompany = async (userId: string) => {
     // Evitar reentrância
@@ -87,53 +88,96 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadingRoleRef.current = userId;
     setIsLoadingRole(true);
 
+    let loadedRole: AppRole | null = null;
+    let loadedCompanyId: string | null = null;
+    let lastError: Error | null = null;
+
     try {
       let attempt = 1;
       const maxAttempts = 2;
       const delays = [500, 1500]; // ms entre tentativas
 
-      while (attempt <= maxAttempts) {
+      while (attempt <= maxAttempts && !loadedRole) {
         try {
-          // Query 1: Buscar role na tabela user_roles
+          if (isDev) {
+            console.log(`[AUTH] loadRoleAndCompany tentativa ${attempt}/${maxAttempts}`);
+          }
+
+          // Query 1: Buscar role na tabela user_roles (fonte primária)
           const roleRes = await supabase
             .from("user_roles")
             .select("role")
             .eq("user_id", userId)
             .maybeSingle();
 
-          // Query 2: Buscar company_id (primeira empresa associada)
-          const companyRes = await supabase
-            .from("company_users")
-            .select("company_id")
-            .eq("user_id", userId)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
+          if (roleRes.error) {
+            if (roleRes.error.code === "PGRST116") {
+              // Sem dados - não é erro crítico, mas user não tem role definida
+              if (isDev) {
+                console.log(`[AUTH] user_roles: sem dados para user ${userId}`);
+              }
+              lastError = new Error("Nenhuma role encontrada para este usuário");
+            } else {
+              // Erro real (RLS, connection, etc)
+              lastError = new Error(`user_roles query error: ${roleRes.error.message}`);
+              if (isDev) {
+                console.error(`[AUTH] user_roles error:`, roleRes.error);
+              }
+            }
+          } else if (roleRes.data?.role) {
+            loadedRole = roleRes.data.role as AppRole;
+            if (isDev) {
+              console.log(`[AUTH] role encontrada em user_roles: ${loadedRole}`);
+            }
 
-          // Se ambas as queries tiverem erro, trata o erro
-          if (roleRes.error && roleRes.error.code !== "PGRST116") {
-            // PGRST116 = no rows found (esperado para usuários sem role)
-            throw roleRes.error;
+            // Query 2: Buscar company_id (primeira empresa associada)
+            try {
+              const companyRes = await supabase
+                .from("company_users")
+                .select("company_id")
+                .eq("user_id", userId)
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              if (companyRes.data?.company_id) {
+                loadedCompanyId = companyRes.data.company_id;
+                if (isDev) {
+                  console.log(
+                    `[AUTH] companyId encontrado em company_users: ${loadedCompanyId}`
+                  );
+                }
+              } else if (isDev && companyRes.error?.code !== "PGRST116") {
+                console.warn(`[AUTH] company_users error:`, companyRes.error);
+              }
+            } catch (e) {
+              if (isDev) {
+                console.error(`[AUTH] company_users exception:`, e);
+              }
+              // Não é crítico se company_id não carregar
+            }
           }
-          if (companyRes.error && companyRes.error.code !== "PGRST116") {
-            throw companyRes.error;
+
+          // Se conseguiu carregar a role, sai do loop de retry
+          if (loadedRole) {
+            break;
           }
 
-          // Atualizar estado com a role obtida
-          const role = roleRes.data?.role ?? "user";
-          const cid = companyRes.data?.company_id ?? null;
-
-          setAppRole(role);
-          setIsAdmin(role === "admin");
-          setCompanyId(cid);
-
-          if (isDev) {
-            console.log(
-              `[AUTH] role carregada: role=${role}, isAdmin=${role === "admin"}, companyId=${cid}`
-            );
+          // Se não conseguiu, tenta novamente
+          if (attempt < maxAttempts) {
+            const delay = delays[attempt - 1];
+            if (isDev) {
+              console.warn(
+                `[AUTH] Role não carregada na tentativa ${attempt}/${maxAttempts}, ` +
+                  `retentando em ${delay}ms`
+              );
+            }
+            await new Promise((r) => setTimeout(r, delay));
+            attempt++;
+          } else {
+            // Saiu do loop sem conseguir
+            throw lastError || new Error("Role não foi carregada após múltiplas tentativas");
           }
-
-          return; // Sucesso
         } catch (e) {
           if (attempt < maxAttempts) {
             const delay = delays[attempt - 1];
@@ -151,19 +195,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       }
+
+      // Se carregou a role com sucesso, atualiza estado
+      if (loadedRole) {
+        setAppRole(loadedRole);
+        setIsAdmin(loadedRole === "admin");
+        setCompanyId(loadedCompanyId);
+
+        if (isDev) {
+          console.log(
+            `[AUTH] role=${loadedRole}, isAdmin=${loadedRole === "admin"}, companyId=${loadedCompanyId}`
+          );
+        }
+      } else {
+        // Não conseguiu carregar - mantém estado anterior (não força "user")
+        if (isDev) {
+          console.error(
+            `[AUTH] loadRoleAndCompany falhou após múltiplas tentativas:`,
+            lastError
+          );
+        }
+        // NÃO fazemos fallback automático para "user"
+        // Mantemos appRole como null até conseguir carregar
+      }
     } catch (e) {
-      // Se todas as tentativas falharem, registra warning mas mantém user logado
+      // Erro não esperado - log completo
       if (isDev) {
-        console.warn(
-          `[AUTH] loadRoleAndCompany falhou após múltiplas tentativas:`,
+        console.error(
+          `[AUTH] loadRoleAndCompany erro inesperado:`,
           e
         );
       }
-      // Define role como "user" por padrão se falhar (fallback seguro)
-      setAppRole("user");
-      setIsAdmin(false);
-      setCompanyId(null);
-      // App continua utilizável, user permanece autenticado
+      // NÃO força fallback - mantém estado anterior
     } finally {
       loadingRoleRef.current = null;
       setIsLoadingRole(false);
@@ -174,6 +237,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const init = async () => {
       setIsLoading(true);
       setIsLoadingRole(false);
+      
+      if (isDev) {
+        console.log("[AUTH] Iniciando autenticação...");
+      }
+
       try {
         // Recupera sessão SEM Promise.race agressivo.
         // Deixamos a promise natural, apenas protegendo com timeout 30s max como fallback.
@@ -223,7 +291,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setSession(null);
           setIsAdmin(false);
           setCompanyId(null);
-          setAppRole("user");
+          setAppRole(null);
+          setIsLoading(false);
           return;
         }
 
@@ -232,16 +301,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(currentSession?.user ?? null);
 
         if (isDev) {
-          console.log("[AUTH] session user:", currentSession?.user?.id);
+          console.log("[AUTH] user:", currentSession?.user?.id);
         }
+
+        // Libera loading - UI não fica travada enquanto role é carregada
+        setIsLoading(false);
 
         // SEMPRE carrega role/company após obter a sessão
         if (currentSession?.user?.id) {
           await loadRoleAndCompany(currentSession.user.id);
         } else {
+          // Sem usuário autenticado, reseta estado
           setIsAdmin(false);
           setCompanyId(null);
-          setAppRole("user");
+          setAppRole(null);
         }
       } catch (e) {
         if (isDev) {
@@ -252,9 +325,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(null);
         setIsAdmin(false);
         setCompanyId(null);
-        setAppRole("user");
-      } finally {
-        // GARANTIDO: loading sempre completa
+        setAppRole(null);
         setIsLoading(false);
       }
     };
@@ -272,7 +343,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(newSession?.user ?? null);
 
         if (isDev) {
-          console.log("[AUTH] session user:", newSession?.user?.id);
+          console.log("[AUTH] user:", newSession?.user?.id);
         }
 
         // Reset role/company ao trocar usuário
@@ -283,9 +354,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Recarrega role/company para novo usuário
           await loadRoleAndCompany(newSession.user.id);
         } else {
+          // Logout
           setIsAdmin(false);
           setCompanyId(null);
-          setAppRole("user");
+          setAppRole(null);
         }
 
         setIsLoading(false);
