@@ -153,9 +153,11 @@ export function BookingProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+
+    // Seleciona apenas colunas existentes no banco
     let query = supabase
       .from("bookings")
-      .select("*")
+      .select("id, name, company_id, created_at, flights, hotels, car_rentals, passengers")
       .order("created_at", { ascending: false });
 
     if (!isAdmin) {
@@ -169,25 +171,30 @@ export function BookingProvider({ children }: { children: ReactNode }) {
         }
     }
 
-    const { data, error } = await query;
-    if (error || !data) {
-      console.error("Error fetching bookings:", error);
+    try {
+      const { data, error } = await query;
+      if (error || !data) {
+        console.error("Error fetching bookings:", error);
+        setBookings([]);
+        return;
+      }
+
+      const typed: BookingRow[] = (data ?? []).map((b: any) => ({
+        id: b.id,
+        name: b.name,
+        company_id: b.company_id,
+        created_at: b.created_at,
+        flights: Array.isArray(b.flights) ? b.flights : [],
+        hotels: Array.isArray(b.hotels) ? b.hotels : [],
+        car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
+        passengers: Array.isArray(b.passengers) ? b.passengers : [],
+      }));
+
+      setBookings(typed);
+    } catch (err) {
+      console.error("Exception fetching bookings:", err);
       setBookings([]);
-      return;
     }
-
-    const typed: BookingRow[] = (data ?? []).map((b: any) => ({
-      id: b.id,
-      name: b.name,
-      company_id: b.company_id,
-      created_at: b.created_at,
-      flights: Array.isArray(b.flights) ? b.flights : [],
-      hotels: Array.isArray(b.hotels) ? b.hotels : [],
-      car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
-      passengers: Array.isArray(b.passengers) ? b.passengers : [],
-    }));
-
-    setBookings(typed);
   };
 
   useEffect(() => {

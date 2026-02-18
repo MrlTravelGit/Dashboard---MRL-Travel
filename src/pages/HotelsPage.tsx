@@ -1,4 +1,5 @@
 
+
 import { useState, useEffect, useMemo } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HotelCard } from '@/components/cards/HotelCard';
@@ -23,7 +24,7 @@ export default function HotelsPage() {
       try {
         const { data, error } = await supabase
           .from('bookings')
-          .select('id, name, hotels, passengers')
+          .select('id, name, hotels, passengers, main_passenger_name')
           .order('created_at', { ascending: false });
         if (!error && data && !cancelled) {
           setBookings(data);
@@ -44,19 +45,20 @@ export default function HotelsPage() {
   const hotels = useMemo(() => {
     const out: any[] = [];
     for (const b of bookings) {
-      if (Array.isArray(b.hotels)) {
-        for (const h of b.hotels) {
+      if (Array.isArray(b.hotels) && b.hotels.length > 0) {
+        b.hotels.forEach((h: any, idx: number) => {
           out.push({
             ...h,
             booking_id: b.id,
+            hotel_index: idx,
             // Nome do hóspede: preferir fullName, depois main_passenger_name, depois vazio
-            guest_name: b.passengers?.[0]?.fullName ?? b.main_passenger_name ?? '',
+            guest_name: b.passengers?.[0]?.fullName || b.main_passenger_name || '',
             // Nome do hotel: preferir name, depois hotelName, depois vazio
-            hotel_display_name: h.name ?? h.hotelName ?? '',
-            check_in: h.checkIn ?? '',
-            check_out: h.checkOut ?? '',
+            hotel_display_name: h.name || h.hotelName || '',
+            check_in: h.checkIn || '',
+            check_out: h.checkOut || '',
           });
-        }
+        });
       }
     }
     return out;
@@ -72,6 +74,8 @@ export default function HotelsPage() {
       newHotels.splice(hotelIndex, 1);
       await supabase.from('bookings').update({ hotels: newHotels }).eq('id', bookingId);
       setBookings((prev) => prev.map((b) => b.id === bookingId ? { ...b, hotels: newHotels } : b));
+    } catch (err) {
+      console.error('Erro ao excluir hospedagem:', err);
     } finally {
       setLoading(false);
     }
@@ -80,7 +84,7 @@ export default function HotelsPage() {
   // Filtro de busca
   const filteredHotels = useMemo(() => hotels.filter(hotel => {
     return (
-      (hotel.confirmationCode || hotel.confirm || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (hotel.code || hotel.confirmationCode || hotel.confirm || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (hotel.hotel_display_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (hotel.guest_name || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -121,7 +125,7 @@ export default function HotelsPage() {
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Hospedagens</h3>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {filteredHotels.map((hotel, idx) => {
+                  {filteredHotels.map((hotel) => {
                     const safeHotel = {
                       ...hotel,
                       hotel_display_name: hotel.hotel_display_name || 'Hotel não informado',
@@ -129,9 +133,9 @@ export default function HotelsPage() {
                     };
                     return (
                       <HotelCard
-                        key={hotel.booking_id + '-' + idx}
+                        key={hotel.booking_id + '-' + hotel.hotel_index}
                         hotel={safeHotel as any}
-                        onDelete={isAdmin ? () => handleDeleteHotel(hotel.booking_id, idx) : undefined}
+                        onDelete={isAdmin ? () => handleDeleteHotel(hotel.booking_id, hotel.hotel_index) : undefined}
                       />
                     );
                   })}

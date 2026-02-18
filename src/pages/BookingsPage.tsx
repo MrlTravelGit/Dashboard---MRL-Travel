@@ -65,7 +65,7 @@ export default function BookingsPage() {
     setIsLoadingBookings(true);
     let query = supabase
       .from('bookings')
-      .select('*')
+      .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at')
       .order('created_at', { ascending: false });
 
     // Exemplo: se quiser filtrar por empresa, só faça se companyId estiver definido
@@ -95,7 +95,7 @@ export default function BookingsPage() {
       try {
         const { data, error } = await supabase
           .from('companies')
-          .select('*')
+          .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at')
           .order('name');
         if (!error && data && !cancelled) {
           setCompanies(data);
@@ -446,7 +446,7 @@ export default function BookingsPage() {
         passport: p.passport,
       }));
 
-      // Cria reserva com passengers
+      // Cria reserva com todos os dados extraídos (inclusive hotels, flights, car_rentals, passengers)
       const { data: insertedBooking, error } = await supabase
         .from('bookings')
         .insert({
@@ -465,13 +465,6 @@ export default function BookingsPage() {
         .single();
 
       if (error) throw error;
-
-      const bookingId = insertedBooking?.id;
-
-      // Salva hotéis extraídos diretamente na coluna hotels do booking
-      if (bookingId && extractedData.hotels?.length > 0) {
-        await supabase.from('bookings').update({ hotels: extractedData.hotels }).eq('id', bookingId);
-      }
 
       // Auto-register employees if option is enabled and passengers were extracted
       let employeesCreated = 0;
@@ -538,7 +531,7 @@ export default function BookingsPage() {
       setFormData({ companyId: '', url: '', title: '', passengerName: '', totalPaid: '', totalOriginal: '' });
       setExtractedData(null);
       setAutoRegisterEmployees(true);
-      fetchBookings();
+      await fetchBookings();
       refreshBookingContext();
     } catch (error: any) {
       console.error('Submit error:', error);
