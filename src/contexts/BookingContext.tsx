@@ -44,6 +44,17 @@ interface BookingContextType {
 
 type BookingRow = {
   id: string;
+  const typed: BookingRow[] = data.map((b: any) => ({
+    id: b.id,
+    name: b.name,
+    company_id: b.company_id,
+    created_at: b.created_at,
+    flights: (b.flights as unknown as Flight[]) || [],
+    hotels: (b.hotels as unknown as Hotel[]) || [],
+    car_rentals: (b.car_rentals as unknown as CarRental[]) || [],
+    passengers: (b.passengers as unknown as any[]) || [],
+  }));
+  setBookings(typed);
   name: string;
   company_id: string;
   created_at: string;

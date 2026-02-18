@@ -19,6 +19,7 @@ interface HotelBooking {
   total?: number;
   locator?: string; // for compatibility with HotelCard
   guestName?: string; // for compatibility with HotelCard
+  booking_id?: string;
 }
 
 export default function HotelsPage() {
@@ -32,35 +33,57 @@ export default function HotelsPage() {
     const loadHotelBookings = async () => {
       setLoading(true);
       try {
-        // Use dynamic query to bypass type checking until migration is applied
-        const { data, error } = await (supabase as any)
+        // Busca hotel_bookings e faz join lógico com bookings para pegar passageiro principal
+        const { data: hotelData, error: hotelError } = await (supabase as any)
           .from('hotel_bookings')
           .select('*')
           .order('created_at', { ascending: false });
 
-        if (!error && data) {
-          // Normalize hotel_bookings to be compatible with HotelCard
-          const normalized: HotelBooking[] = data.map(h => ({
-            id: h.id,
-            hotel_name: h.hotel_name,
-            confirmation_code: h.confirmation_code,
-            check_in: h.check_in,
-            check_out: h.check_out,
-            city: h.city,
-            guests: h.guests,
-            total: h.total,
-            locator: h.confirmation_code, // use confirmation_code as locator
-            guestName: h.guests, // use guests as guestName for display
-          }));
+        if (!hotelError && hotelData && hotelData.length > 0) {
+          // Busca bookings relacionados para pegar passengers
+          const bookingIds = hotelData.map((h: any) => h.booking_id).filter(Boolean);
+          let bookingMap: Record<string, any> = {};
+          if (bookingIds.length > 0) {
+            const { data: bookingsData, error: bookingsError } = await (supabase as any)
+              .from('bookings')
+              .select('id, passengers')
+              .in('id', bookingIds);
+            if (!bookingsError && bookingsData) {
+              bookingMap = Object.fromEntries(bookingsData.map((b: any) => [b.id, b]));
+            }
+          }
+          // Normaliza e injeta guestName do passageiro principal
+          const normalized: HotelBooking[] = hotelData.map((h: any) => {
+            let guestName = h.guests;
+            if ((!guestName || guestName === '-') && h.booking_id && bookingMap[h.booking_id]) {
+              const passengers = bookingMap[h.booking_id]?.passengers || [];
+              guestName = passengers[0]?.name || passengers[0]?.fullName || 'Não informado';
+            }
+            return {
+              id: h.id,
+              hotel_name: h.hotel_name,
+              confirmation_code: h.confirmation_code,
+              check_in: h.check_in,
+              check_out: h.check_out,
+              city: h.city,
+              guests: h.guests,
+              total: h.total,
+              locator: h.confirmation_code,
+              guestName,
+              booking_id: h.booking_id,
+            };
+          });
           setHotelBookings(normalized);
+        } else {
+          setHotelBookings([]);
         }
       } catch (err) {
         console.error('Error loading hotel bookings (expected if migration not applied):', err);
+        setHotelBookings([]);
       } finally {
         setLoading(false);
       }
     };
-
     loadHotelBookings();
   }, []);
 

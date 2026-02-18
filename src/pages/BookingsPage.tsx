@@ -65,7 +65,7 @@ export default function BookingsPage() {
     setIsLoadingBookings(true);
     const { data, error } = await supabase
       .from('bookings')
-      .select('*, flights (*), hotels (*), car_rentals (*)')
+      .select('*, flights (*), hotels (*), car_rentals (*), passengers')
       .order('created_at', { ascending: false });
 
     if (!error && data) {
@@ -422,8 +422,7 @@ export default function BookingsPage() {
     
     try {
       const { data: userData } = await supabase.auth.getUser();
-      
-      // Normalize passengers array from extracted data (use 'name' if available, else 'fullName')
+      // Passengers: garantir array de objetos com nome, cpf, etc
       const passengersToSave = (extractedData.passengers || []).map((p: any) => ({
         name: p.name || p.fullName || '',
         cpf: p.cpf,
@@ -433,7 +432,7 @@ export default function BookingsPage() {
         passport: p.passport,
       }));
 
-      // Create the booking with passengers array
+      // Cria reserva com passengers
       const { data: insertedBooking, error } = await supabase
         .from('bookings')
         .insert({
@@ -455,15 +454,13 @@ export default function BookingsPage() {
 
       const bookingId = insertedBooking?.id;
 
-      // Auto-insert hotels into hotel_bookings table if extraction returned hotels
-      // NOTE: hotel_bookings table will be available after migration is applied
+      // Vincula hotel_bookings ao booking criado, preenchendo guests com nome do passageiro principal
       let hotelsInserted = 0;
       if (bookingId && extractedData.hotels?.length > 0) {
-        const guestNames = passengersToSave.map((p: any) => p.name).filter(Boolean).join(', ');
-        
+        // Nome do hóspede principal: primeiro passageiro
+        const mainGuest = passengersToSave[0]?.name || '';
         for (const hotel of extractedData.hotels) {
-            try {
-            // Use dynamic insert to bypass type checking until migration is applied
+          try {
             const { error: hotelError } = await (supabase as any).from('hotel_bookings').insert({
               booking_id: bookingId,
               company_id: formData.companyId,
@@ -473,11 +470,10 @@ export default function BookingsPage() {
               confirmation_code: hotel.confirmationCode || hotel.confirm || undefined,
               check_in: hotel.checkIn ? new Date(hotel.checkIn.split('/').reverse().join('-')).toISOString().split('T')[0] : undefined,
               check_out: hotel.checkOut ? new Date(hotel.checkOut.split('/').reverse().join('-')).toISOString().split('T')[0] : undefined,
-              guests: guestNames || undefined,
+              guests: mainGuest,
               total: hotel.total || null,
               created_by: userData.user?.id,
             });
-
             if (!hotelError) {
               hotelsInserted++;
             } else {
@@ -566,6 +562,7 @@ export default function BookingsPage() {
     }
   };
 
+  // Mostra todas para admin, ou só da empresa do usuário
   const filteredBookings = bookings.filter(booking => {
     return booking.name.toLowerCase().includes(searchTerm.toLowerCase());
   });
