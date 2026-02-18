@@ -63,11 +63,15 @@ export default function BookingsPage() {
 
   const fetchBookings = async () => {
     setIsLoadingBookings(true);
-    const { data, error } = await supabase
+    let query = supabase
       .from('bookings')
       .select('*, flights (*), hotels (*), car_rentals (*), passengers')
       .order('created_at', { ascending: false });
 
+    // Exemplo: se quiser filtrar por empresa, só faça se companyId estiver definido
+    // if (companyId) query = query.eq('company_id', companyId);
+
+    const { data, error } = await query;
     if (!error && data) {
       const typedBookings: BookingFromDB[] = data.map((b: any) => ({
         ...b,
@@ -984,7 +988,9 @@ export default function BookingsPage() {
                             {(() => {
                               const hotel = booking.hotels[0];
                               const name = hotel?.hotelName || hotel?.name || hotel?.hotel_name;
-                              if (hotel && name) return name;
+                              const checkIn = hotel?.checkIn || hotel?.check_in;
+                              const checkOut = hotel?.checkOut || hotel?.check_out;
+                              if (hotel && name) return `${name}${checkIn ? ` (${checkIn}` : ''}${checkOut ? ` - ${checkOut})` : (checkIn ? ')' : '')}`;
                               if (hotel && !name) return 'Não informado';
                               return null;
                             })()}

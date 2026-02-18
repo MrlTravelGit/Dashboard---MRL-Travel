@@ -1,5 +1,5 @@
+
 import { useState, useEffect } from 'react';
-import { useBooking } from '@/contexts/BookingContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HotelCard } from '@/components/cards/HotelCard';
 import { HotelForm } from '@/components/forms/HotelForm';
@@ -8,98 +8,70 @@ import { Search, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 
-interface HotelBooking {
-  id: string;
-  hotel_name: string;
-  confirmation_code?: string;
-  check_in?: string;
-  check_out?: string;
-  city?: string;
-  guests?: string;
-  total?: number;
-  locator?: string; // for compatibility with HotelCard
-  guestName?: string; // for compatibility with HotelCard
-  booking_id?: string;
-}
-
 export default function HotelsPage() {
-  const { hotels, deleteHotel } = useBooking();
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
-  const [hotelBookings, setHotelBookings] = useState<HotelBooking[]>([]);
+  const [hotelBookings, setHotelBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Carrega bookings que tenham hotels preenchido
   useEffect(() => {
-    const loadHotelBookings = async () => {
+    const loadHotels = async () => {
       setLoading(true);
       try {
-        // Busca hotel_bookings e faz join lógico com bookings para pegar passageiro principal
-        const { data: hotelData, error: hotelError } = await (supabase as any)
-          .from('hotel_bookings')
-          .select('*')
+        const { data, error } = await supabase
+          .from('bookings')
+          .select('id, name, hotels, passengers')
           .order('created_at', { ascending: false });
-
-        if (!hotelError && hotelData && hotelData.length > 0) {
-          // Busca bookings relacionados para pegar passengers
-          const bookingIds = hotelData.map((h: any) => h.booking_id).filter(Boolean);
-          let bookingMap: Record<string, any> = {};
-          if (bookingIds.length > 0) {
-            const { data: bookingsData, error: bookingsError } = await (supabase as any)
-              .from('bookings')
-              .select('id, passengers')
-              .in('id', bookingIds);
-            if (!bookingsError && bookingsData) {
-              bookingMap = Object.fromEntries(bookingsData.map((b: any) => [b.id, b]));
-            }
-          }
-          // Normaliza e injeta guestName do passageiro principal
-          const normalized: HotelBooking[] = hotelData.map((h: any) => {
-            let guestName = h.guests;
-            if ((!guestName || guestName === '-') && h.booking_id && bookingMap[h.booking_id]) {
-              const passengers = bookingMap[h.booking_id]?.passengers || [];
-              guestName = passengers[0]?.name || passengers[0]?.fullName || 'Não informado';
-            }
-            return {
-              id: h.id,
-              hotel_name: h.hotel_name,
-              confirmation_code: h.confirmation_code,
-              check_in: h.check_in,
-              check_out: h.check_out,
-              city: h.city,
-              guests: h.guests,
-              total: h.total,
-              locator: h.confirmation_code,
-              guestName,
-              booking_id: h.booking_id,
-            };
-          });
-          setHotelBookings(normalized);
+        if (!error && data) {
+          // Filtra bookings que tenham pelo menos 1 hotel
+          const hotelsList = data
+            .filter((b: any) => Array.isArray(b.hotels) && b.hotels.length > 0)
+            .map((b: any) => {
+              const hotel = b.hotels[0];
+              return {
+                id: b.id,
+                hotel_name: hotel?.hotelName || hotel?.name || '-',
+                confirmation_code: hotel?.confirmationCode || hotel?.confirm || '-',
+                check_in: hotel?.checkIn || '-',
+                check_out: hotel?.checkOut || '-',
+                city: hotel?.city || '-',
+                guests: b.passengers?.[0]?.name || '-',
+                total: Number(hotel?.total ?? 0),
+                locator: hotel?.confirmationCode || '-',
+                guestName: b.passengers?.[0]?.name || '-',
+                booking_id: b.id,
+              };
+            });
+          setHotelBookings(hotelsList);
         } else {
           setHotelBookings([]);
         }
       } catch (err) {
-        console.error('Error loading hotel bookings (expected if migration not applied):', err);
         setHotelBookings([]);
       } finally {
         setLoading(false);
       }
     };
-    loadHotelBookings();
+    loadHotels();
   }, []);
 
-  const filteredHotels = hotels.filter(hotel => {
-    return (
-      (hotel.locator || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (hotel.hotelName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (hotel.guestName || '').toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  });
+  // Excluir hospedagem = limpar campo hotels do booking
+  const handleDeleteHotel = async (bookingId: string) => {
+    setLoading(true);
+    try {
+      await supabase.from('bookings').update({ hotels: [] }).eq('id', bookingId);
+      setHotelBookings((prev) => prev.filter((h) => h.booking_id !== bookingId));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const filteredHotelBookings = hotelBookings.filter(hotel => {
     return (
       (hotel.confirmation_code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (hotel.hotel_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (hotel.guests || '').toLowerCase().includes(searchTerm.toLowerCase())
+      (hotel.guestName || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
   });
 
@@ -133,35 +105,27 @@ export default function HotelsPage() {
           </div>
         ) : (
           <>
-            {/* Hotel Bookings from hotel_bookings table */}
-            {filteredHotelBookings.length > 0 && (
+
+            {filteredHotelBookings.length > 0 ? (
               <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Hospedagens Cadastradas</h3>
+                <h3 className="text-lg font-semibold">Hospedagens</h3>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {filteredHotelBookings.map((hotel) => (
                     <HotelCard
                       key={hotel.id}
                       hotel={hotel as any}
-                      onDelete={undefined} // hotel_bookings don't have delete from HotelCard directly
+                      onDelete={isAdmin ? () => handleDeleteHotel(hotel.booking_id) : undefined}
                     />
                   ))}
                 </div>
               </div>
-            )}
-
-            {/* Hotels from bookings table (JSONB) */}
-            {filteredHotels.length > 0 && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Hospedagens Extraídas</h3>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {filteredHotels.map((hotel) => (
-                    <HotelCard
-                      key={hotel.id}
-                      hotel={hotel}
-                      onDelete={isAdmin ? deleteHotel : undefined}
-                    />
-                  ))}
-                </div>
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">
+                  {searchTerm
+                    ? 'Nenhuma hospedagem encontrada com os filtros aplicados.'
+                    : 'Nenhuma hospedagem cadastrada ainda.'}
+                </p>
               </div>
             )}
 

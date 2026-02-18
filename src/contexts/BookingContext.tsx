@@ -175,7 +175,9 @@ export function BookingProvider({ children }: { children: ReactNode }) {
         setBookings([]);
         return;
       }
-      query = query.eq("company_id", cid);
+        if (cid) {
+          query = query.eq("company_id", cid);
+        }
     }
 
     const { data, error } = await query;

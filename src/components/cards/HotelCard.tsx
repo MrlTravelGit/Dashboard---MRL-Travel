@@ -26,7 +26,7 @@ interface HotelCardProps {
 export function HotelCard({ hotel, showSavings = true, viewMode = 'card', onDelete }: HotelCardProps) {
   const bookingAwareId = hotel.bookingId ? `${hotel.bookingId}:${hotel.id}` : hotel.id;
   function safeNumber(value: any, fallback = 0) {
-    const n = Number(value);
+    const n = Number(value ?? 0);
     return Number.isFinite(n) ? n : fallback;
   }
 
