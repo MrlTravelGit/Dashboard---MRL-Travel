@@ -961,9 +961,9 @@ export default function BookingsPage() {
                             <span className="font-medium">Hotel: </span>
                             {(() => {
                               const hotel = booking.hotels[0];
-                              const name = hotel?.hotelName || hotel?.name || hotel?.hotel_name;
-                              const checkIn = hotel?.checkIn || hotel?.check_in;
-                              const checkOut = hotel?.checkOut || hotel?.check_out;
+                              const name = hotel?.hotelName;
+                              const checkIn = hotel?.checkIn;
+                              const checkOut = hotel?.checkOut;
                               if (hotel && name) return `${name}${checkIn ? ` (${checkIn}` : ''}${checkOut ? ` - ${checkOut})` : (checkIn ? ')' : '')}`;
                               if (hotel && !name) return 'Não informado';
                               return null;
@@ -1082,7 +1082,7 @@ export default function BookingsPage() {
                                             <span className="font-medium">Hotel: </span>
                                             {(() => {
                                               const hotel = booking.hotels[0];
-                                              const name = hotel?.hotelName || hotel?.name || hotel?.hotel_name;
+                                              const name = hotel?.hotelName;
                                               if (hotel && name) return name;
                                               if (hotel && !name) return 'Não informado';
                                               return null;

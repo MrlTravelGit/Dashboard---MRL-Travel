@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HotelCard } from '@/components/cards/HotelCard';
 import { HotelForm } from '@/components/forms/HotelForm';
@@ -12,50 +12,72 @@ export default function HotelsPage() {
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
 
-  const [hotelBookings, setHotelBookings] = useState<any[]>([]);
+  const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Carrega hospedagens da tabela hotel_bookings
+  // Carrega bookings que tenham hotéis
   useEffect(() => {
-    const loadHotels = async () => {
+    const loadBookings = async () => {
       setLoading(true);
       try {
         const { data, error } = await supabase
-          .from('hotel_bookings')
-          .select('*')
+          .from('bookings')
+          .select('id, name, hotels, passengers')
           .order('created_at', { ascending: false });
         if (!error && data) {
-          setHotelBookings(data);
+          setBookings(data);
         } else {
-          setHotelBookings([]);
+          setBookings([]);
         }
       } catch (err) {
-        setHotelBookings([]);
+        setBookings([]);
       } finally {
         setLoading(false);
       }
     };
-    loadHotels();
+    loadBookings();
   }, []);
 
-  // Excluir hospedagem = deletar de hotel_bookings
-  const handleDeleteHotel = async (hotelId: string) => {
+  // Flatten bookings.hotels para lista de hospedagens
+  const hotels = useMemo(() => {
+    const out: any[] = [];
+    for (const b of bookings) {
+      if (Array.isArray(b.hotels)) {
+        for (const h of b.hotels) {
+          out.push({
+            ...h,
+            booking_id: b.id,
+            guest_name: b.passengers?.[0]?.name || '-',
+          });
+        }
+      }
+    }
+    return out;
+  }, [bookings]);
+
+  // Excluir hospedagem = remover do array hotels e atualizar booking
+  const handleDeleteHotel = async (bookingId: string, hotelIndex: number) => {
     setLoading(true);
     try {
-      await supabase.from('hotel_bookings').delete().eq('id', hotelId);
-      setHotelBookings((prev) => prev.filter((h) => h.id !== hotelId));
+      const booking = bookings.find((b) => b.id === bookingId);
+      if (!booking) return;
+      const newHotels = [...(booking.hotels || [])];
+      newHotels.splice(hotelIndex, 1);
+      await supabase.from('bookings').update({ hotels: newHotels }).eq('id', bookingId);
+      setBookings((prev) => prev.map((b) => b.id === bookingId ? { ...b, hotels: newHotels } : b));
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredHotelBookings = hotelBookings.filter(hotel => {
+  // Filtro de busca
+  const filteredHotels = useMemo(() => hotels.filter(hotel => {
     return (
-      (hotel.reservation_code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (hotel.hotel_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (hotel.confirmationCode || hotel.confirm || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (hotel.hotelName || hotel.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (hotel.guest_name || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
-  });
+  }), [hotels, searchTerm]);
 
   return (
     <DashboardLayout>
@@ -88,15 +110,15 @@ export default function HotelsPage() {
         ) : (
           <>
 
-            {filteredHotelBookings.length > 0 ? (
+            {filteredHotels.length > 0 ? (
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Hospedagens</h3>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {filteredHotelBookings.map((hotel) => (
+                  {filteredHotels.map((hotel, idx) => (
                     <HotelCard
-                      key={hotel.id}
+                      key={hotel.booking_id + '-' + idx}
                       hotel={hotel as any}
-                      onDelete={isAdmin ? () => handleDeleteHotel(hotel.booking_id) : undefined}
+                      onDelete={isAdmin ? () => handleDeleteHotel(hotel.booking_id, idx) : undefined}
                     />
                   ))}
                 </div>
@@ -106,17 +128,6 @@ export default function HotelsPage() {
                 <p className="text-muted-foreground">
                   {searchTerm
                     ? 'Nenhuma hospedagem encontrada com os filtros aplicados.'
-                    : 'Nenhuma hospedagem cadastrada ainda.'}
-                </p>
-              </div>
-            )}
-
-            {/* Empty State */}
-            {filteredHotelBookings.length === 0 && filteredHotels.length === 0 && (
-              <div className="text-center py-12">
-                <p className="text-muted-foreground">
-                  {searchTerm 
-                    ? 'Nenhuma hospedagem encontrada com os filtros aplicados.' 
                     : 'Nenhuma hospedagem cadastrada ainda.'}
                 </p>
               </div>
