@@ -29,10 +29,14 @@ export default function HotelsPage() {
         if (!error && data && !cancelled) {
           setBookings(data);
         } else if (!cancelled) {
+          if (error?.name === 'AbortError') {
+            // Silencia aborts (ex: navegação rápida)
+            return;
+          }
           setBookings([]);
         }
-      } catch (err) {
-        if (!cancelled) setBookings([]);
+      } catch (err: any) {
+        if (!cancelled && err?.name !== 'AbortError') setBookings([]);
       } finally {
         if (!cancelled) setLoading(false);
       }

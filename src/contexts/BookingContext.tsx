@@ -153,8 +153,6 @@ export function BookingProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-
-    // Seleciona apenas colunas existentes no banco
     let query = supabase
       .from("bookings")
       .select("id, name, company_id, created_at, flights, hotels, car_rentals, passengers")
@@ -166,14 +164,18 @@ export function BookingProvider({ children }: { children: ReactNode }) {
         setBookings([]);
         return;
       }
-        if (cid) {
-          query = query.eq("company_id", cid);
-        }
+      if (cid) {
+        query = query.eq("company_id", cid);
+      }
     }
 
     try {
       const { data, error } = await query;
       if (error || !data) {
+        if (error?.name === 'AbortError') {
+          // Silencia aborts (ex: navegação rápida)
+          return;
+        }
         console.error("Error fetching bookings:", error);
         setBookings([]);
         return;
@@ -191,7 +193,11 @@ export function BookingProvider({ children }: { children: ReactNode }) {
       }));
 
       setBookings(typed);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        // Silencia aborts (ex: navegação rápida)
+        return;
+      }
       console.error("Exception fetching bookings:", err);
       setBookings([]);
     }
