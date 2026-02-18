@@ -65,7 +65,7 @@ export default function BookingsPage() {
     setIsLoadingBookings(true);
     const { data, error } = await supabase
       .from('bookings')
-      .select('*')
+      .select('*, flights (*), hotels (*), car_rentals (*)')
       .order('created_at', { ascending: false });
 
     if (!error && data) {
@@ -980,6 +980,20 @@ export default function BookingsPage() {
                           )}
                         </div>
 
+                        {/* Hotel vinculado */}
+                        {booking.hotels && booking.hotels.length > 0 && (
+                          <div className="text-sm text-muted-foreground mt-1">
+                            <span className="font-medium">Hotel: </span>
+                            {(() => {
+                              const hotel = booking.hotels[0];
+                              const name = hotel?.hotelName || hotel?.name || hotel?.hotel_name;
+                              if (hotel && name) return name;
+                              if (hotel && !name) return 'Não informado';
+                              return null;
+                            })()}
+                          </div>
+                        )}
+
                         {/* Passengers short list */}
                         <div className="text-sm text-muted-foreground mt-1">
                           <span className="font-medium">Passageiros: </span>
@@ -1043,7 +1057,6 @@ export default function BookingsPage() {
                         Abrir reserva
                       </Button>
 
-                      
                       {/* Botão Excluir */}
                       {isAdmin && (
                         <AlertDialog>
@@ -1081,14 +1094,24 @@ export default function BookingsPage() {
                         </AlertDialog>
                       )}
                     </div>
-
-
-                    
                   </Card>
                 );
               }
               
               // Modo Card - Completo
+                                        {/* Hotel vinculado */}
+                                        {booking.hotels && booking.hotels.length > 0 && (
+                                          <div className="text-sm text-muted-foreground mt-1">
+                                            <span className="font-medium">Hotel: </span>
+                                            {(() => {
+                                              const hotel = booking.hotels[0];
+                                              const name = hotel?.hotelName || hotel?.name || hotel?.hotel_name;
+                                              if (hotel && name) return name;
+                                              if (hotel && !name) return 'Não informado';
+                                              return null;
+                                            })()}
+                                          </div>
+                                        )}
               return (
                 <Card key={booking.id}>
                   <CardHeader className="bg-primary/5">

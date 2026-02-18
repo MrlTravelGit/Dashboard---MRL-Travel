@@ -25,29 +25,33 @@ interface HotelCardProps {
 
 export function HotelCard({ hotel, showSavings = true, viewMode = 'card', onDelete }: HotelCardProps) {
   const bookingAwareId = hotel.bookingId ? `${hotel.bookingId}:${hotel.id}` : hotel.id;
+  function safeNumber(value: any, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
 
   if (viewMode === 'landscape') {
     return (
       <div className="flex items-center gap-4 p-3 rounded-lg border border-l-4 border-l-secondary bg-card hover:bg-accent/50 transition-colors">
         <div className="flex items-center gap-2 min-w-[100px]">
           <Building2 className="h-4 w-4 text-secondary" />
-          <span className="font-medium text-sm truncate max-w-[120px]">{hotel.hotelName}</span>
+          <span className="font-medium text-sm truncate max-w-[120px]">{hotel.hotelName || hotel.hotel_name || 'Não informado'}</span>
         </div>
         
-        <Badge variant="outline" className="text-xs">{hotel.locator}</Badge>
+        <Badge variant="outline" className="text-xs">{hotel.locator || hotel.confirmation_code || '-'}</Badge>
         
         <div className="flex items-center gap-2">
-          <span className="text-sm">{hotel.checkIn}</span>
+          <span className="text-sm">{hotel.checkIn || hotel.check_in || '-'}</span>
           <ArrowRight className="h-3 w-3 text-muted-foreground" />
-          <span className="text-sm">{hotel.checkOut}</span>
+          <span className="text-sm">{hotel.checkOut || hotel.check_out || '-'}</span>
         </div>
         
         <div className="flex items-center gap-1 text-sm text-muted-foreground">
           <Moon className="h-3 w-3" />
-          <span>{hotel.nights}</span>
+          <span>{safeNumber(hotel.nights || 1)}</span>
         </div>
         
-        <div className="text-sm text-muted-foreground truncate max-w-[150px]">{hotel.guestName}</div>
+        <div className="text-sm text-muted-foreground truncate max-w-[150px]">{hotel.guestName || hotel.guests || 'Não informado'}</div>
         
         {hotel.breakfast && (
           <Badge variant="secondary" className="text-xs">

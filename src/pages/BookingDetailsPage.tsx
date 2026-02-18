@@ -304,6 +304,21 @@ export default function BookingDetailsPage() {
                 />
               </div>
 
+              {booking.hotels && booking.hotels.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Hotel vinculado</Label>
+                  <div className="text-sm text-muted-foreground">
+                    {(() => {
+                      const hotel = booking.hotels[0];
+                      const name = hotel?.hotelName || hotel?.name || hotel?.hotel_name;
+                      if (hotel && name) return name;
+                      if (hotel && !name) return 'Não informado';
+                      return null;
+                    })()}
+                  </div>
+                </div>
+              )}
+
               {isAdmin ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
