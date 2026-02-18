@@ -458,35 +458,9 @@ export default function BookingsPage() {
 
       const bookingId = insertedBooking?.id;
 
-      // Vincula hotel_bookings ao booking criado, preenchendo guests com nome do passageiro principal
-      let hotelsInserted = 0;
+      // Salva hotéis extraídos diretamente na coluna hotels do booking
       if (bookingId && extractedData.hotels?.length > 0) {
-        // Nome do hóspede principal: primeiro passageiro
-        const mainGuest = passengersToSave[0]?.name || '';
-        for (const hotel of extractedData.hotels) {
-          try {
-            const { error: hotelError } = await (supabase as any).from('hotel_bookings').insert({
-              booking_id: bookingId,
-              company_id: formData.companyId,
-              hotel_name: hotel.name || hotel.hotelName || '',
-              city: hotel.city || undefined,
-              address: hotel.address || undefined,
-              confirmation_code: hotel.confirmationCode || hotel.confirm || undefined,
-              check_in: hotel.checkIn ? new Date(hotel.checkIn.split('/').reverse().join('-')).toISOString().split('T')[0] : undefined,
-              check_out: hotel.checkOut ? new Date(hotel.checkOut.split('/').reverse().join('-')).toISOString().split('T')[0] : undefined,
-              guests: mainGuest,
-              total: hotel.total || null,
-              created_by: userData.user?.id,
-            });
-            if (!hotelError) {
-              hotelsInserted++;
-            } else {
-              console.warn('Error creating hotel booking:', hotelError);
-            }
-          } catch (ex) {
-            console.warn('Hotel booking insert failed (may be expected if migration not applied):', ex);
-          }
-        }
+        await supabase.from('bookings').update({ hotels: extractedData.hotels }).eq('id', bookingId);
       }
 
       // Auto-register employees if option is enabled and passengers were extracted
