@@ -47,7 +47,12 @@ export default function HotelsPage() {
           out.push({
             ...h,
             booking_id: b.id,
-            guest_name: b.passengers?.[0]?.name || '-',
+            // Nome do hóspede: preferir fullName, depois main_passenger_name, depois vazio
+            guest_name: b.passengers?.[0]?.fullName ?? b.main_passenger_name ?? '',
+            // Nome do hotel: preferir name, depois hotelName, depois vazio
+            hotel_display_name: h.name ?? h.hotelName ?? '',
+            check_in: h.checkIn ?? '',
+            check_out: h.checkOut ?? '',
           });
         }
       }
@@ -74,7 +79,7 @@ export default function HotelsPage() {
   const filteredHotels = useMemo(() => hotels.filter(hotel => {
     return (
       (hotel.confirmationCode || hotel.confirm || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (hotel.hotelName || hotel.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (hotel.hotel_display_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (hotel.guest_name || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
   }), [hotels, searchTerm]);

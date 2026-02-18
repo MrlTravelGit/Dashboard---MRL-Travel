@@ -65,7 +65,7 @@ export default function BookingsPage() {
     setIsLoadingBookings(true);
     let query = supabase
       .from('bookings')
-      .select('*, flights (*), hotels (*), car_rentals (*), passengers')
+      .select('*')
       .order('created_at', { ascending: false });
 
     // Exemplo: se quiser filtrar por empresa, só faça se companyId estiver definido
@@ -73,14 +73,18 @@ export default function BookingsPage() {
 
     const { data, error } = await query;
     if (!error && data) {
-      const typedBookings: BookingFromDB[] = data.map((b: any) => ({
+      // Mapeia bookings simples, tratando JSONs e fallback seguro
+      const typedBookings: BookingFromDB[] = (data ?? []).map((b: any) => ({
         ...b,
-        flights: (b.flights as unknown as Flight[]) || [],
-        hotels: (b.hotels as unknown as Hotel[]) || [],
-        car_rentals: (b.car_rentals as unknown as CarRental[]) || [],
-        passengers: (b.passengers as unknown as any[]) || [],
+        flights: Array.isArray(b.flights) ? b.flights : [],
+        hotels: Array.isArray(b.hotels) ? b.hotels : [],
+        car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
+        passengers: Array.isArray(b.passengers) ? b.passengers : [],
       }));
       setBookings(typedBookings);
+    } else if (error) {
+      console.error('Erro ao buscar reservas:', error);
+      toast({ title: 'Erro ao buscar reservas', description: error.message || String(error), variant: 'destructive' });
     }
     setIsLoadingBookings(false);
   };
