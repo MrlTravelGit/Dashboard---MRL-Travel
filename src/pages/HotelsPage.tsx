@@ -11,39 +11,21 @@ import { supabase } from '@/integrations/supabase/client';
 export default function HotelsPage() {
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+
   const [hotelBookings, setHotelBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Carrega bookings que tenham hotels preenchido
+  // Carrega hospedagens da tabela hotel_bookings
   useEffect(() => {
     const loadHotels = async () => {
       setLoading(true);
       try {
         const { data, error } = await supabase
-          .from('bookings')
-          .select('id, name, hotels, passengers')
+          .from('hotel_bookings')
+          .select('*')
           .order('created_at', { ascending: false });
         if (!error && data) {
-          // Filtra bookings que tenham pelo menos 1 hotel
-          const hotelsList = data
-            .filter((b: any) => Array.isArray(b.hotels) && b.hotels.length > 0)
-            .map((b: any) => {
-              const hotel = b.hotels[0];
-              return {
-                id: b.id,
-                hotel_name: hotel?.hotelName || hotel?.name || '-',
-                confirmation_code: hotel?.confirmationCode || hotel?.confirm || '-',
-                check_in: hotel?.checkIn || '-',
-                check_out: hotel?.checkOut || '-',
-                city: hotel?.city || '-',
-                guests: b.passengers?.[0]?.name || '-',
-                total: Number(hotel?.total ?? 0),
-                locator: hotel?.confirmationCode || '-',
-                guestName: b.passengers?.[0]?.name || '-',
-                booking_id: b.id,
-              };
-            });
-          setHotelBookings(hotelsList);
+          setHotelBookings(data);
         } else {
           setHotelBookings([]);
         }
@@ -56,12 +38,12 @@ export default function HotelsPage() {
     loadHotels();
   }, []);
 
-  // Excluir hospedagem = limpar campo hotels do booking
-  const handleDeleteHotel = async (bookingId: string) => {
+  // Excluir hospedagem = deletar de hotel_bookings
+  const handleDeleteHotel = async (hotelId: string) => {
     setLoading(true);
     try {
-      await supabase.from('bookings').update({ hotels: [] }).eq('id', bookingId);
-      setHotelBookings((prev) => prev.filter((h) => h.booking_id !== bookingId));
+      await supabase.from('hotel_bookings').delete().eq('id', hotelId);
+      setHotelBookings((prev) => prev.filter((h) => h.id !== hotelId));
     } finally {
       setLoading(false);
     }
@@ -69,9 +51,9 @@ export default function HotelsPage() {
 
   const filteredHotelBookings = hotelBookings.filter(hotel => {
     return (
-      (hotel.confirmation_code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (hotel.reservation_code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (hotel.hotel_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (hotel.guestName || '').toLowerCase().includes(searchTerm.toLowerCase())
+      (hotel.guest_name || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
   });
 

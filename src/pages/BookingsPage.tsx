@@ -515,8 +515,8 @@ export default function BookingsPage() {
       if (employeesCreated > 0) {
         descriptionMessage += ` ${employeesCreated} funcionário(s) cadastrado(s).`;
       }
-      if (hotelsInserted > 0) {
-        descriptionMessage += ` ${hotelsInserted} hotel(is) adicionado(s).`;
+      if (extractedData.hotels && extractedData.hotels.length > 0) {
+        descriptionMessage += ` ${extractedData.hotels.length} hotel(is) adicionado(s).`;
       }
 
       toast({
