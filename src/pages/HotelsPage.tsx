@@ -17,6 +17,7 @@ export default function HotelsPage() {
 
   // Carrega bookings que tenham hotéis
   useEffect(() => {
+    let cancelled = false;
     const loadBookings = async () => {
       setLoading(true);
       try {
@@ -24,18 +25,19 @@ export default function HotelsPage() {
           .from('bookings')
           .select('id, name, hotels, passengers')
           .order('created_at', { ascending: false });
-        if (!error && data) {
+        if (!error && data && !cancelled) {
           setBookings(data);
-        } else {
+        } else if (!cancelled) {
           setBookings([]);
         }
       } catch (err) {
-        setBookings([]);
+        if (!cancelled) setBookings([]);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     loadBookings();
+    return () => { cancelled = true; };
   }, []);
 
   // Flatten bookings.hotels para lista de hospedagens

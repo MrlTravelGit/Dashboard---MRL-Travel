@@ -90,20 +90,26 @@ export default function BookingsPage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
     const fetchCompanies = async () => {
-      const { data, error } = await supabase
-        .from('companies')
-        .select('*')
-        .order('name');
-
-      if (!error && data) {
-        setCompanies(data);
+      try {
+        const { data, error } = await supabase
+          .from('companies')
+          .select('*')
+          .order('name');
+        if (!error && data && !cancelled) {
+          setCompanies(data);
+        }
+      } finally {
+        if (!cancelled) setIsLoadingCompanies(false);
       }
-      setIsLoadingCompanies(false);
     };
-    
-    fetchCompanies();
-    fetchBookings();
+    const fetchAll = async () => {
+      await fetchCompanies();
+      await fetchBookings();
+    };
+    fetchAll();
+    return () => { cancelled = true; };
   }, []);
 
   const handleDeleteBooking = async (bookingId: string, bookingName: string) => {

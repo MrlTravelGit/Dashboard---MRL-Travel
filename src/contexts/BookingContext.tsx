@@ -155,7 +155,7 @@ export function BookingProvider({ children }: { children: ReactNode }) {
 
     let query = supabase
       .from("bookings")
-      .select("id, name, company_id, created_at, flights, hotels, car_rentals, passengers")
+      .select("*")
       .order("created_at", { ascending: false });
 
     if (!isAdmin) {
@@ -176,15 +176,15 @@ export function BookingProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const typed: BookingRow[] = data.map((b: any) => ({
+    const typed: BookingRow[] = (data ?? []).map((b: any) => ({
       id: b.id,
       name: b.name,
       company_id: b.company_id,
       created_at: b.created_at,
-      flights: (b.flights as unknown as Flight[]) || [],
-      hotels: (b.hotels as unknown as Hotel[]) || [],
-      car_rentals: (b.car_rentals as unknown as CarRental[]) || [],
-      passengers: (b.passengers as unknown as any[]) || [],
+      flights: Array.isArray(b.flights) ? b.flights : [],
+      hotels: Array.isArray(b.hotels) ? b.hotels : [],
+      car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
+      passengers: Array.isArray(b.passengers) ? b.passengers : [],
     }));
 
     setBookings(typed);
