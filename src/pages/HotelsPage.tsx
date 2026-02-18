@@ -121,13 +121,20 @@ export default function HotelsPage() {
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Hospedagens</h3>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {filteredHotels.map((hotel, idx) => (
-                    <HotelCard
-                      key={hotel.booking_id + '-' + idx}
-                      hotel={hotel as any}
-                      onDelete={isAdmin ? () => handleDeleteHotel(hotel.booking_id, idx) : undefined}
-                    />
-                  ))}
+                  {filteredHotels.map((hotel, idx) => {
+                    const safeHotel = {
+                      ...hotel,
+                      hotel_display_name: hotel.hotel_display_name || 'Hotel não informado',
+                      guest_name: hotel.guest_name || 'Hóspede não identificado',
+                    };
+                    return (
+                      <HotelCard
+                        key={hotel.booking_id + '-' + idx}
+                        hotel={safeHotel as any}
+                        onDelete={isAdmin ? () => handleDeleteHotel(hotel.booking_id, idx) : undefined}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             ) : (

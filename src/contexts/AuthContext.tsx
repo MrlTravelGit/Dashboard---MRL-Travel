@@ -25,6 +25,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const isDev = import.meta.env.DEV;
 
+
+let authInitCount = 0;
+let authListenerCount = 0;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -33,6 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingRole, setIsLoadingRole] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
   // Guard para evitar reentrância de loadRoleAndCompany
   const loadingRoleRef = useRef<string | null>(null);
@@ -42,140 +47,101 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const keys: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k) keys.push(k);
-      }
-      for (const k of keys) {
-        if (k.startsWith("sb-")) localStorage.removeItem(k);
-      }
-    } catch {
-      // ignore
-    }
-  };
-
-  const resetAuthState = async () => {
-    try {
-      await supabase.auth.signOut();
-    } catch {
-      // ignore
-    }
-    clearSupabaseStorage();
-    setUser(null);
-    setSession(null);
-    setIsAdmin(false);
-    setCompanyId(null);
-    setAppRole(null);
-  };
-
-  /**
-   * Carrega admin status a partir da tabela admin_users.
-   * - Busca em admin_users (user_id) para verificar se é admin
-   * - Retry 2x com delays progressivos se falhar por rede/timeout
-   * - NÃO seta isAdmin=false por erro - mantém estado anterior
-   * - Só seta isAdmin=false quando a query retorna null explicitamente
-   * - Carrega company_id de company_users em paralelo
-   */
-  const loadAdminStatus = async (userId: string) => {
-    // Evitar reentrância
-    if (loadingRoleRef.current === userId) {
-      if (isDev) {
-        console.warn(
-          `[AUTH] loadAdminStatus já em execução para ${userId}, ignorando chamada`
-        );
-      }
-      return;
-    }
-
-    loadingRoleRef.current = userId;
-    setIsLoadingRole(true);
-
-    let isAdminValue = false;
-    let loadedCompanyId: string | null = null;
-    let lastError: Error | null = null;
-
-    try {
-      let attempt = 1;
-      const maxAttempts = 2;
-      const delays = [500, 1500]; // ms entre tentativas
-
-      while (attempt <= maxAttempts) {
-        try {
-          if (isDev) {
-            console.log(`[AUTH] loadAdminStatus tentativa ${attempt}/${maxAttempts}`);
-          }
-
-          // Query: Buscar se user_id existe em admin_users
-          // Usando type casting (as any) pois admin_users pode ser tabela custom
-          const adminRes = await supabase
-            .from("admin_users" as any)
-            .select("user_id")
-            .eq("user_id", userId)
-            .maybeSingle() as any;
-
-          // Se houve erro (RLS, connection, etc)
-          if (adminRes.error) {
-            if (adminRes.error.code === "PGRST116") {
-              // Sem dados - user não é admin (esperado para maioria dos usuários)
-              isAdminValue = false;
-              if (isDev) {
-                console.log(`[AUTH] userId não encontrado em admin_users: ${userId}`);
+        useEffect(() => {
+          authInitCount++;
+          if (isDev) console.log(`[AUTH] useEffect init count: ${authInitCount}`);
+          let unsub: (() => void) | undefined;
+          let cancelled = false;
+          const init = async () => {
+            setIsLoading(true);
+            setIsLoadingRole(false);
+            if (isDev) console.log("[AUTH] Iniciando autenticação...");
+            try {
+              let timeoutId: number | undefined;
+              let timeoutOccurred = false;
+              const sessionPromise = supabase.auth.getSession();
+              const timeoutPromise = new Promise<never>((_resolve, reject) => {
+                timeoutId = window.setTimeout(() => {
+                  timeoutOccurred = true;
+                  reject(new Error("getSession: timeout de proteção 30s"));
+                }, 30000);
+              });
+              let sessionResult: { data: { session: Session | null }; error: any };
+              try {
+                sessionResult = await Promise.race([sessionPromise, timeoutPromise]);
+              } catch (e) {
+                if (timeoutOccurred) {
+                  if (isDev) {
+                    console.warn("[AUTH] Timeout na recuperação de sessão após 30s. Permitindo que o app continue, sessão será atualizada quando disponível.");
+                  }
+                  sessionResult = { data: { session: null }, error: null };
+                } else {
+                  throw e;
+                }
+              } finally {
+                if (timeoutId !== undefined) window.clearTimeout(timeoutId);
               }
+              const { data, error } = sessionResult;
+              if (error) {
+                if (isDev) console.error("[AUTH] getSession error:", error);
+                setUser(null);
+                setSession(null);
+                setIsAdmin(false);
+                setCompanyId(null);
+                setAppRole(null);
+                setIsLoading(false);
+                setAuthReady(true);
+                return;
+              }
+              const currentSession = data?.session ?? null;
+              setSession(currentSession);
+              setUser(currentSession?.user ?? null);
+              if (isDev) console.log("[AUTH] userId:", currentSession?.user?.id);
+              setIsLoading(false);
+              setAuthReady(true);
+              if (currentSession?.user?.id) {
+                await loadAdminStatus(currentSession.user.id);
+              } else {
+                setIsAdmin(false);
+                setCompanyId(null);
+                setAppRole(null);
+              }
+            } catch (e) {
+              if (isDev) console.error("[AUTH] Auth init falhou:", e);
+              setUser(null);
+              setSession(null);
+              setIsAdmin(false);
+              setCompanyId(null);
+              setAppRole(null);
+              setIsLoading(false);
+              setAuthReady(true);
+            }
+          };
+          void init();
+          // Listener de mudanças de autenticação
+          const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+            authListenerCount++;
+            if (isDev) console.log(`[AUTH] onAuthStateChange count: ${authListenerCount}`);
+            if (isDev) console.log("[AUTH] onAuthStateChange event:", _event);
+            setSession(newSession);
+            setUser(newSession?.user ?? null);
+            if (isDev) console.log("[AUTH] userId:", newSession?.user?.id);
+            if (newSession?.user?.id) {
+              setIsAdmin(false);
+              setCompanyId(null);
+              setAppRole(null);
+              await loadAdminStatus(newSession.user.id);
             } else {
-              // Erro real (RLS, connection, etc) - não é dado vazio
-              lastError = new Error(`admin_users query error: ${adminRes.error.message}`);
-              if (isDev) {
-                console.error(`[AUTH] admin_users error:`, adminRes.error);
-              }
-              // Não seta isAdmin - mantém estado anterior
-              throw lastError;
+              setIsAdmin(false);
+              setCompanyId(null);
+              setAppRole(null);
             }
-          } else if (adminRes.data) {
-            // user_id encontrado - é admin
-            isAdminValue = true;
-            if (isDev) {
-              console.log(`[AUTH] userId encontrado em admin_users: ${userId}`);
-            }
-          } else {
-            // Sem dados e sem erro - user não é admin
-            isAdminValue = false;
-            if (isDev) {
-              console.log(`[AUTH] userId não é admin: ${userId}`);
-            }
-          }
-
-          // Se conseguiu obter resultado claro (com ou sem erro PGRST116), sai do loop
-          if (!lastError || (lastError && lastError.message.includes("PGRST116"))) {
-            // Query bem-sucedida ou sem dados (esperado)
-            lastError = null; // Limpa o erro PGRST116 pois é esperado
-            break;
-          }
-
-          // Se erro real, tenta novamente
-          if (attempt < maxAttempts) {
-            const delay = delays[attempt - 1];
-            if (isDev) {
-              console.warn(
-                `[AUTH] loadAdminStatus falhou na tentativa ${attempt}/${maxAttempts}, ` +
-                  `retentando em ${delay}ms`
-              );
-            }
-            await new Promise((r) => setTimeout(r, delay));
-            attempt++;
-          } else {
-            throw lastError || new Error("Não foi possível carregar status de admin");
-          }
-        } catch (e) {
-          if (attempt < maxAttempts) {
-            const delay = delays[attempt - 1];
-            if (isDev) {
-              console.warn(
-                `[AUTH] loadAdminStatus falhou na tentativa ${attempt}/${maxAttempts}, ` +
-                  `retentando em ${delay}ms:`,
-                e
-              );
-            }
-            await new Promise((r) => setTimeout(r, delay));
-            attempt++;
-          } else {
+            setIsLoading(false);
+            setAuthReady(true);
+          });
+          unsub = () => authListener.subscription.unsubscribe();
+          return () => { if (unsub) unsub(); cancelled = true; };
+        }, []);
             // Saiu do loop - mantem erro anterior, não força false
             if (isDev) {
               console.error(`[AUTH] loadAdminStatus falhou após múltiplas tentativas:`, e);
@@ -404,7 +370,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signOut,
       }}
     >
-      {children}
+      {authReady ? children : null}
     </AuthContext.Provider>
   );
 }
