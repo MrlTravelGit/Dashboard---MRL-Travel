@@ -23,11 +23,10 @@ const queryClient = new QueryClient();
 
 // Protected route component - bloqueia se não autenticado
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, isLoadingRole } = useAuth();
+  const { user, isLoading, isLoadingRole, isAdmin, appRole } = useAuth();
 
   // Aguarda carregar session e role
   // Estado para mostrar botão de reset após 10s (apenas admin)
-  const { isAdmin } = useAuth();
   const [showReset, setShowReset] = React.useState(false);
   React.useEffect(() => {
     if (isLoading || isLoadingRole) {
@@ -39,11 +38,19 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }, [isLoading, isLoadingRole]);
 
   if (isLoading || isLoadingRole) {
+    let lastKnownAdmin = false;
+    try {
+      lastKnownAdmin = localStorage.getItem("lastKnownAdmin") === "1";
+    } catch {
+      lastKnownAdmin = false;
+    }
+
+    const canShowReset = Boolean(isAdmin || appRole === "admin" || lastKnownAdmin);
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
         {/* Botão só aparece para admin, após 10s de loading */}
-        {showReset && isAdmin === true && (
+        {showReset && canShowReset && (
           <div className="flex flex-col items-center mt-6">
             <button
               className="px-4 py-2 rounded bg-red-600 text-white font-semibold shadow hover:bg-red-700 transition-colors"

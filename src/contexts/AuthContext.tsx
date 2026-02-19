@@ -64,6 +64,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsAdmin(false);
     setCompanyId(null);
     setAppRole(null);
+    try {
+      localStorage.removeItem("lastKnownAdmin");
+    } catch {
+      // ignore
+    }
   };
 
   /**
@@ -189,6 +194,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!lastError) {
         setIsAdmin(isAdminValue);
         setAppRole(isAdminValue ? "admin" : "user");
+
+        // Persistir último estado admin para permitir ações de recuperação
+        // mesmo quando a checagem de role estiver em loading.
+        try {
+          if (isAdminValue) localStorage.setItem("lastKnownAdmin", "1");
+          else localStorage.removeItem("lastKnownAdmin");
+        } catch {
+          // ignore
+        }
 
         if (isDev) {
           console.log(`[AUTH] userId=${userId}, isAdmin=${isAdminValue}`);

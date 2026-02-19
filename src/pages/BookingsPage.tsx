@@ -43,10 +43,7 @@ export default function BookingsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [open, setOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'card' | 'landscape'>('card');
-  // Empresas para o painel (listagem)
   const [companies, setCompanies] = useState<Company[]>([]);
-  // Empresas para o select do modal
-  const [modalCompanies, setModalCompanies] = useState<Company[]>([]);
   const [bookings, setBookings] = useState<BookingFromDB[]>([]);
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(true);
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
@@ -122,12 +119,44 @@ export default function BookingsPage() {
     }
   };
 
-  // Busca empresas para o painel (admin vê todas, user vê só as vinculadas)
+  // Carrega reservas ao entrar na página.
+  // Evita loop: roda uma vez e também quando status admin muda.
   useEffect(() => {
     let cancelled = false;
-    async function fetchPanelCompanies() {
+    (async () => {
+      if (cancelled) return;
+      await fetchBookings();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  // Busca empresas vinculadas ao usuário para o select do modal
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchUserCompanies() {
+      // Carrega empresas somente quando o modal estiver aberto.
+      // Isso evita buscar antes de a sessão estar pronta e reduz requisições desnecessárias.
+      if (!open) {
+        setIsLoadingCompanies(false);
+        return;
+      }
       setIsLoadingCompanies(true);
       try {
+        // Admin: listar todas as empresas (para cadastrar reserva em qualquer empresa)
+        if (isAdmin) {
+          const { data: allCompanies, error: allCompaniesError } = await supabase
+            .from('companies')
+            .select('id, name')
+            .order('name');
+
+          if (allCompaniesError) throw allCompaniesError;
+          if (!cancelled) setCompanies((allCompanies || []) as Company[]);
+          return;
+        }
+
         const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
         if (sessionErr) throw sessionErr;
         const userId = sessionData.session?.user?.id;
@@ -135,34 +164,25 @@ export default function BookingsPage() {
           setCompanies([]);
           return;
         }
-        let companiesData: Company[] = [];
-        if (isAdmin) {
-          // Admin vê todas
-          const { data, error } = await supabase
+        // Buscar company_ids vinculados ao usuário
+        const { data: companyLinks, error: linkError } = await supabase
+          .from('company_users')
+          .select('company_id')
+          .eq('user_id', userId);
+        if (linkError) throw linkError;
+        const companyIds = (companyLinks || []).map((c: any) => c.company_id);
+        // Buscar empresas vinculadas
+        if (companyIds.length) {
+          const { data: companiesData, error: companiesError } = await supabase
             .from('companies')
-            .select('*')
+            .select('id, name')
+            .in('id', companyIds)
             .order('name');
-          if (error) throw error;
-          companiesData = data || [];
+          if (companiesError) throw companiesError;
+          if (!cancelled) setCompanies((companiesData || []) as Company[]);
         } else {
-          // User vê só as vinculadas
-          const { data: companyLinks, error: linkError } = await supabase
-            .from('company_users')
-            .select('company_id')
-            .eq('user_id', userId);
-          if (linkError) throw linkError;
-          const companyIds = (companyLinks || []).map((c: any) => c.company_id);
-          if (companyIds.length) {
-            const { data, error } = await supabase
-              .from('companies')
-              .select('*')
-              .in('id', companyIds)
-              .order('name');
-            if (error) throw error;
-            companiesData = data || [];
-          }
+          if (!cancelled) setCompanies([]);
         }
-        if (!cancelled) setCompanies(companiesData);
       } catch (error: any) {
         if (error?.name === 'AbortError') return;
         const details = getSupabaseErrorDetails(error);
@@ -180,62 +200,7 @@ export default function BookingsPage() {
         if (!cancelled) setIsLoadingCompanies(false);
       }
     }
-    fetchPanelCompanies();
-    return () => { cancelled = true; };
-  }, [isAdmin]);
-
-  // Busca empresas para o select do modal (sempre só as vinculadas ao user, com todos os campos)
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchModalCompanies() {
-      if (!open) {
-        setModalCompanies([]);
-        return;
-      }
-      setIsLoadingCompanies(true);
-      try {
-        const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-        if (sessionErr) throw sessionErr;
-        const userId = sessionData.session?.user?.id;
-        if (!userId) {
-          setModalCompanies([]);
-          return;
-        }
-        const { data: companyLinks, error: linkError } = await supabase
-          .from('company_users')
-          .select('company_id')
-          .eq('user_id', userId);
-        if (linkError) throw linkError;
-        const companyIds = (companyLinks || []).map((c: any) => c.company_id);
-        if (companyIds.length) {
-          const { data, error } = await supabase
-            .from('companies')
-            .select('*')
-            .in('id', companyIds)
-            .order('name');
-          if (error) throw error;
-          if (!cancelled) setModalCompanies(data || []);
-        } else {
-          if (!cancelled) setModalCompanies([]);
-        }
-      } catch (error: any) {
-        if (error?.name === 'AbortError') return;
-        const details = getSupabaseErrorDetails(error);
-        console.error('Erro ao buscar empresas (modal):', details, error);
-        toast({
-          title: 'Erro ao buscar empresas',
-          description:
-            error.code === '42501' || error.code === 'PGRST301' || error.code === 'PGRST302'
-              ? 'Sem permissão para acessar empresas. Verifique permissões no Supabase (RLS).'
-              : error.message || String(error),
-          variant: 'destructive',
-        });
-        if (!cancelled) setModalCompanies([]);
-      } finally {
-        if (!cancelled) setIsLoadingCompanies(false);
-      }
-    }
-    fetchModalCompanies();
+    fetchUserCompanies();
     return () => { cancelled = true; };
   }, [open]);
 
@@ -798,10 +763,10 @@ export default function BookingsPage() {
                         <SelectContent>
                           {isLoadingCompanies ? (
                             <SelectItem value="loading" disabled>Carregando...</SelectItem>
-                          ) : modalCompanies.length === 0 ? (
+                          ) : companies.length === 0 ? (
                             <SelectItem value="none" disabled>Nenhuma empresa cadastrada</SelectItem>
                           ) : (
-                            modalCompanies.map(company => (
+                            companies.map(company => (
                               <SelectItem key={company.id} value={company.id}>
                                 {company.name}
                               </SelectItem>
