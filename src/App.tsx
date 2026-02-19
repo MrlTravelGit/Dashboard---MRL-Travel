@@ -1,3 +1,4 @@
+import React from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -25,10 +26,40 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isLoadingRole } = useAuth();
 
   // Aguarda carregar session e role
+  // Estado para mostrar botão de reset após 10s (apenas admin)
+  const { isAdmin } = useAuth();
+  const [showReset, setShowReset] = React.useState(false);
+  React.useEffect(() => {
+    if (isLoading || isLoadingRole) {
+      const timeout = setTimeout(() => setShowReset(true), 10000);
+      return () => clearTimeout(timeout);
+    } else {
+      setShowReset(false);
+    }
+  }, [isLoading, isLoadingRole]);
+
   if (isLoading || isLoadingRole) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        {/* Botão só aparece para admin, após 10s de loading */}
+        {showReset && isAdmin === true && (
+          <div className="flex flex-col items-center mt-6">
+            <button
+              className="px-4 py-2 rounded bg-red-600 text-white font-semibold shadow hover:bg-red-700 transition-colors"
+              onClick={async () => {
+                const { resetSessionAndReload } = await import("@/utils/resetSession");
+                resetSessionAndReload();
+              }}
+              type="button"
+            >
+              Reiniciar cookies e sessão
+            </button>
+            <span className="text-xs text-muted-foreground mt-2 text-center max-w-xs">
+              Isso vai te deslogar e recarregar a página.
+            </span>
+          </div>
+        )}
       </div>
     );
   }
