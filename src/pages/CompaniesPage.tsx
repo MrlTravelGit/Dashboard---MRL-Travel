@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Company } from '@/types/booking';
+import { describeSupabaseError, logSupabaseError } from '@/utils/supabaseError';
 
 interface CompanyWithLogo extends Company {
   logo_url?: string | null;
@@ -29,6 +30,12 @@ export default function CompaniesPage() {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [editingCompany, setEditingCompany] = useState<CompanyWithLogo | null>(null);
+
+  // Painel de vínculo usuário x empresa
+  const [linkCompanyId, setLinkCompanyId] = useState<string>('');
+  const [linkUserId, setLinkUserId] = useState<string>('');
+  const [linkRole, setLinkRole] = useState<'member' | 'admin' | 'owner'>('member');
+  const [isLinking, setIsLinking] = useState(false);
   
   const [formData, setFormData] = useState({
     name: '',
@@ -46,10 +53,13 @@ export default function CompaniesPage() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Error fetching companies:', error);
+      logSupabaseError('fetchCompanies', error);
       toast({
         title: 'Erro',
-        description: 'Não foi possível carregar as empresas.',
+        description:
+          (error as any)?.status === 401 || (error as any)?.status === 403
+            ? 'Sem permissão para acessar empresas. Ajuste as permissões (RLS) no Supabase.'
+            : 'Não foi possível carregar as empresas.',
         variant: 'destructive',
       });
     } else {
@@ -187,22 +197,8 @@ export default function CompaniesPage() {
           description: `A empresa "${formData.name}" foi atualizada com sucesso.`,
         });
       } else {
-        // First create the user account for the company
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: formData.email,
-          password: formData.password,
-          options: {
-            data: {
-              full_name: formData.name,
-            },
-          },
-        });
-
-        if (authError) {
-          throw authError;
-        }
-
-        // Then create the company record
+        // Cria apenas o registro da empresa.
+        // O vínculo de usuários deve ser feito no painel "Vincular usuário".
         const { data: companyData, error: companyError } = await supabase
           .from('companies')
           .insert({
@@ -229,14 +225,6 @@ export default function CompaniesPage() {
           }
         }
 
-        // Link the user to the company if user was created
-        if (authData.user && companyData) {
-          await supabase.from('company_users').insert({
-            company_id: companyData.id,
-            user_id: authData.user.id,
-          });
-        }
-
         toast({
           title: 'Empresa cadastrada!',
           description: `A empresa "${formData.name}" foi cadastrada com sucesso.`,
@@ -250,14 +238,59 @@ export default function CompaniesPage() {
       setLogoPreview(null);
       fetchCompanies();
     } catch (error: any) {
-      console.error('Error saving company:', error);
+      logSupabaseError('saveCompany', error);
       toast({
         title: editingCompany ? 'Erro ao atualizar empresa' : 'Erro ao cadastrar empresa',
-        description: error.message || 'Ocorreu um erro ao salvar a empresa.',
+        description:
+          (error as any)?.status === 401 || (error as any)?.status === 403
+            ? 'Sem permissão para acessar ou cadastrar empresas. Ajuste as permissões (RLS) no Supabase.'
+            : (error?.message || describeSupabaseError(error) || 'Ocorreu um erro ao salvar a empresa.'),
         variant: 'destructive',
       });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleLinkUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!linkCompanyId || !linkUserId) {
+      toast({
+        title: 'Campos obrigatórios',
+        description: 'Selecione a empresa e informe o ID do usuário (UUID).',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsLinking(true);
+    try {
+      const { error } = await supabase.from('company_users').insert({
+        company_id: linkCompanyId,
+        user_id: linkUserId,
+        role: linkRole,
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Vínculo criado',
+        description: 'Usuário vinculado à empresa com sucesso.',
+      });
+      setLinkUserId('');
+      setLinkRole('member');
+    } catch (err: any) {
+      logSupabaseError('linkUserToCompany', err);
+      toast({
+        title: 'Erro ao vincular usuário',
+        description:
+          (err as any)?.status === 401 || (err as any)?.status === 403
+            ? 'Sem permissão para vincular usuários. Ajuste as permissões (RLS) no Supabase.'
+            : (err?.message || describeSupabaseError(err)),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLinking(false);
     }
   };
 
@@ -480,6 +513,71 @@ export default function CompaniesPage() {
             </DialogContent>
           </Dialog>
         </div>
+
+        {/* Painel de vínculo usuário x empresa */}
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <div>
+              <div className="text-lg font-semibold text-foreground">Vincular usuário a empresa</div>
+              <p className="text-sm text-muted-foreground mt-1">
+                Vincule um usuário existente (UUID) a uma empresa sem precisar editar tabelas manualmente.
+              </p>
+            </div>
+
+            <form onSubmit={handleLinkUser} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Empresa</Label>
+                <select
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  value={linkCompanyId}
+                  onChange={(e) => setLinkCompanyId(e.target.value)}
+                >
+                  <option value="">Selecione a empresa</option>
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>ID do usuário (UUID)</Label>
+                <Input
+                  value={linkUserId}
+                  onChange={(e) => setLinkUserId(e.target.value)}
+                  placeholder="ex: 2fd09844-bca0-4449-9d1b-abb7cd43ec30"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Permissão</Label>
+                <select
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  value={linkRole}
+                  onChange={(e) => setLinkRole(e.target.value as any)}
+                >
+                  <option value="member">Membro</option>
+                  <option value="admin">Admin da empresa</option>
+                  <option value="owner">Owner</option>
+                </select>
+              </div>
+
+              <div className="md:col-span-3 flex justify-end">
+                <Button type="submit" disabled={isLinking}>
+                  {isLinking ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Vinculando...
+                    </>
+                  ) : (
+                    'Vincular'
+                  )}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
 
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />

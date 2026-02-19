@@ -123,6 +123,12 @@ export default function BookingsPage() {
   useEffect(() => {
     let cancelled = false;
     async function fetchUserCompanies() {
+      // Carrega empresas somente quando o modal estiver aberto.
+      // Isso evita buscar antes de a sessão estar pronta e reduz requisições desnecessárias.
+      if (!open) {
+        setIsLoadingCompanies(false);
+        return;
+      }
       setIsLoadingCompanies(true);
       try {
         const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
@@ -170,7 +176,7 @@ export default function BookingsPage() {
     }
     fetchUserCompanies();
     return () => { cancelled = true; };
-  }, []);
+  }, [open]);
 
   const handleDeleteBooking = async (bookingId: string, bookingName: string) => {
     setIsDeletingId(bookingId);
