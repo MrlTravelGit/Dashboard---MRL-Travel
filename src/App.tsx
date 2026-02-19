@@ -22,10 +22,10 @@ const queryClient = new QueryClient();
 
 // Protected route component - bloqueia se não autenticado
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, isLoadingRole, authReady } = useAuth();
+  const { user, isLoading, isLoadingRole } = useAuth();
 
-  // Aguarda carregar session e role, mas nunca fica preso se authReady está true
-  if (!authReady || isLoading || isLoadingRole) {
+  // Aguarda carregar session e role
+  if (isLoading || isLoadingRole) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -33,7 +33,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Após loading, se não autenticado, redireciona
   if (!user) {
     return <Navigate to="/login" replace />;
   }
@@ -44,10 +43,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 // Admin route component - bloqueia se não é admin
 // Aguarda role estar carregada antes de redirecionar
 function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { isAdmin, appRole, isLoadingRole, authReady } = useAuth();
+  const { isAdmin, appRole, isLoadingRole } = useAuth();
 
-  // Aguarda role estar carregada, mas nunca fica preso se authReady está true
-  if (!authReady || isLoadingRole) {
+  // Aguarda role estar carregada
+  // NÃO redireciona enquanto role está carregando
+  if (isLoadingRole) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -56,6 +56,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   }
 
   // Após role estar carregada, verifica se é admin
+  // isAdmin pode ser false ou appRole pode ser null - em ambos os casos, bloqueia
   const isUserAdmin = isAdmin || appRole === "admin";
   if (!isUserAdmin) {
     return <Navigate to="/" replace />;
@@ -68,8 +69,15 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 
 // App routes with auth context available
 function AppRoutes() {
-  // Remove duplicated loading logic here, rely on ProtectedRoute
-  const { user } = useAuth();
+  const { user, isLoading, isLoadingRole } = useAuth();
+
+  if (isLoading || isLoadingRole) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <Routes>
