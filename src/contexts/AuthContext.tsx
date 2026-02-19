@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { Loader2 } from "lucide-react";
 
 type AppRole = "admin" | "user";
 
@@ -53,6 +54,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       keys.forEach((k) => localStorage.removeItem(k));
     } catch (e) {
       if (isDev) console.warn('[AUTH] clearSupabaseStorage error:', e);
+    }
+  };
+
+  const getSessionSafe = async (timeoutMs: number) => {
+    let timeoutId: number | undefined;
+    let timeoutOccurred = false;
+
+    const sessionPromise = supabase.auth.getSession();
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeoutId = window.setTimeout(() => {
+        timeoutOccurred = true;
+        reject(new Error(`getSession: timeout de proteção ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([sessionPromise, timeoutPromise]);
+    } catch (e) {
+      if (timeoutOccurred) {
+        return { data: { session: null }, error: null } as const;
+      }
+      throw e;
+    } finally {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     }
   };
 
@@ -131,42 +156,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        // Recupera sessão SEM Promise.race agressivo.
-        // Deixamos a promise natural, apenas protegendo com timeout 30s max como fallback.
-        let timeoutId: number | undefined;
-        let timeoutOccurred = false;
-
-        const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise<never>((_resolve, reject) => {
-          timeoutId = window.setTimeout(() => {
-            timeoutOccurred = true;
-            reject(new Error("getSession: timeout de proteção 30s"));
-          }, 30000);
-        });
-
         let sessionResult: {
           data: { session: Session | null };
           error: any;
         };
-        try {
-          sessionResult = await Promise.race([sessionPromise, timeoutPromise]);
-        } catch (e) {
-          if (timeoutOccurred) {
-            if (isDev) {
-              console.warn(
-                "[AUTH] Timeout na recuperação de sessão após 30s. " +
-                  "Permitindo que o app continue, sessão será atualizada quando disponível."
-              );
-            }
-            // Não quebra o estado, apenas registra warning
-            sessionResult = { data: { session: null }, error: null };
-          } else {
-            throw e;
+        // 1) tenta recuperar sessão com timeout.
+        sessionResult = await getSessionSafe(30000);
+
+        // 2) Se veio null por timeout, limpa storage do supabase e tenta mais uma vez.
+        // Isso resolve casos em que o localStorage do supabase corrompe e o app fica carregando infinito.
+        if (!sessionResult.data.session) {
+          try {
+            clearSupabaseStorage();
+          } catch {
+            // noop
           }
-        } finally {
-          if (timeoutId !== undefined) {
-            window.clearTimeout(timeoutId);
-          }
+          // segunda tentativa mais curta, para não travar novamente
+          sessionResult = await getSessionSafe(8000);
         }
 
         const { data, error } = sessionResult;
@@ -175,12 +181,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (isDev) {
             console.error("[AUTH] getSession error:", error);
           }
+          // Se deu erro, tenta limpar storage para evitar loop em próximos loads.
+          clearSupabaseStorage();
           setUser(null);
           setSession(null);
           setIsAdmin(false);
           setCompanyId(null);
           setAppRole(null);
           setIsLoading(false);
+          setAuthReady(true);
           return;
         }
 
@@ -192,8 +201,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log("[AUTH] userId:", currentSession?.user?.id);
         }
 
-        // Libera loading - UI não fica travada enquanto admin status é carregado
+        // Libera loading. A UI não fica travada enquanto admin status é carregado.
         setIsLoading(false);
+
+        // A partir daqui, o AuthProvider já inicializou (com ou sem sessão).
+        // Isso evita a tela azul/blank quando authReady nunca é liberado.
+        setAuthReady(true);
 
         // SEMPRE carrega admin status após obter a sessão
         if (currentSession?.user?.id) {
@@ -208,6 +221,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (isDev) {
           console.error("[AUTH] Auth init falhou:", e);
         }
+        clearSupabaseStorage();
         // Mantém app utilizável - timeout/erro de rede não força logout
         setUser(null);
         setSession(null);
@@ -215,6 +229,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setCompanyId(null);
         setAppRole(null);
         setIsLoading(false);
+
+        // Mesmo com erro/timeout, liberamos a UI para o app continuar utilizável.
+        setAuthReady(true);
       }
     };
 
@@ -229,6 +246,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         setSession(newSession);
         setUser(newSession?.user ?? null);
+
+        // Garante que a UI não fique presa antes do primeiro evento.
+        setAuthReady(true);
 
         if (isDev) {
           console.log("[AUTH] userId:", newSession?.user?.id);
@@ -284,7 +304,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAppRole(null);
     setIsLoading(false);
     setIsLoadingRole(false);
-    setAuthReady(false);
+    // authReady significa "AuthProvider inicializado". Após signOut, ele deve permanecer true.
+    setAuthReady(true);
   };
 
   const signOut = async () => {
@@ -307,7 +328,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signOut,
       }}
     >
-      {authReady ? children : null}
+      {authReady ? (
+        children
+      ) : (
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      )}
     </AuthContext.Provider>
   );
 }

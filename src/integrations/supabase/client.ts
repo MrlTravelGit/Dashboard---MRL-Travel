@@ -9,21 +9,35 @@ export const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  // Fail fast with a helpful message instead of confusing 401/404 errors.
+// Nota importante:
+// Em deploys (Vercel/Netlify/Locaweb) é comum o app compilar sem as envs.
+// Se criarmos o client com valores undefined, o bundle pode quebrar e a tela fica em branco.
+// Por isso, criamos o client somente quando as envs existem, e deixamos um erro claro no console.
+const hasSupabaseEnv = Boolean(SUPABASE_URL && SUPABASE_KEY);
+
+if (!hasSupabaseEnv) {
   // eslint-disable-next-line no-console
   console.error(
-    "Supabase env vars missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_ANON_KEY).",
+    "Supabase env vars ausentes. Defina VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY (ou VITE_SUPABASE_ANON_KEY) no ambiente de build.",
   );
 }
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
-  auth: {
-    storage: localStorage,
-    persistSession: true,
-    autoRefreshToken: true,
-  }
-});
+// Mantemos o app de pé mesmo sem envs, para evitar tela em branco.
+// O client abaixo vai falhar nas chamadas (como esperado), mas permite exibir UI/erros.
+const fallbackUrl = "https://invalid.supabase.co";
+const fallbackKey = "invalid";
+
+export const supabase = createClient<Database>(
+  (SUPABASE_URL || fallbackUrl) as string,
+  (SUPABASE_KEY || fallbackKey) as string,
+  {
+    auth: {
+      storage: localStorage,
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+  },
+);
