@@ -124,6 +124,7 @@ export default function BookingsPage() {
       setIsLoadingCompanies(true);
       try {
         const user = supabase.auth.user && supabase.auth.user();
+        console.log('[EMPRESAS] user:', user);
         if (!user) {
           setCompanies([]);
           return;
@@ -131,14 +132,16 @@ export default function BookingsPage() {
         // Busca company_ids vinculados ao usuário
         const { data: vinculos, error: vincErr } = await supabase
           .from('company_users')
-          .select('company_id')
+          .select('company_id, user_id')
           .eq('user_id', user.id);
+        console.log('[EMPRESAS] vinculos:', vinculos, 'error:', vincErr);
         if (vincErr) {
           console.error('Erro ao buscar vínculos company_users:', vincErr);
           setCompanies([]);
           return;
         }
         const companyIds = (vinculos ?? []).map((v: any) => v.company_id);
+        console.log('[EMPRESAS] companyIds:', companyIds);
         if (companyIds.length === 0) {
           setCompanies([]);
           return;
@@ -148,6 +151,7 @@ export default function BookingsPage() {
           .from('companies')
           .select('id, name')
           .in('id', companyIds);
+        console.log('[EMPRESAS] companiesData:', companiesData, 'error:', compErr);
         if (compErr) {
           console.error('Erro ao buscar empresas:', compErr);
           setCompanies([]);
