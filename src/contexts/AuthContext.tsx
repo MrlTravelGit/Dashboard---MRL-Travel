@@ -90,14 +90,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let lastError = null;
       let loadedCompanyId: string | null = null;
       try {
-        // Checa se userId tem role 'admin' na tabela user_roles
+        // Checa se o usuário existe na tabela admin_users (public.admin_users)
         const { data, error } = await supabase
-          .from('user_roles')
-          .select('role')
+          .from('admin_users')
+          .select('user_id')
           .eq('user_id', userId)
+          .limit(1)
           .maybeSingle();
         if (error) throw error;
-        isAdminValue = data?.role === 'admin';
+        isAdminValue = !!data?.user_id;
       } catch (e) {
         lastError = e;
         if (isDev) {
