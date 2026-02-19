@@ -87,18 +87,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let lastError = null;
       let loadedCompanyId: string | null = null;
       try {
-        // Checa se userId tem role 'admin' na tabela user_roles
-        const { data, error } = await withTimeout(
+        // Fonte principal: tabela admin_users (user_id)
+        const adminRes = await withTimeout(
           supabase
-            .from('user_roles')
-            .select('role')
+            .from('admin_users')
+            .select('user_id')
             .eq('user_id', userId)
             .maybeSingle(),
           8000,
-          'loadAdminStatus(user_roles)'
+          'loadAdminStatus(admin_users)'
         );
-        if (error) throw error;
-        isAdminValue = data?.role === 'admin';
+        if (adminRes.error) throw adminRes.error;
+        isAdminValue = !!adminRes.data?.user_id;
+
+        // Compatibilidade: se não for admin via admin_users, tenta user_roles (quando existir)
+        if (!isAdminValue) {
+          const rolesRes = await withTimeout(
+            supabase
+              .from('user_roles')
+              .select('role')
+              .eq('user_id', userId)
+              .maybeSingle(),
+            8000,
+            'loadAdminStatus(user_roles)'
+          );
+          // Se a tabela user_roles não existir ou estiver bloqueada, não derruba o fluxo
+          if (!rolesRes.error) {
+            isAdminValue = rolesRes.data?.role === 'admin';
+          }
+        }
       } catch (e) {
         lastError = e;
         if (isDev) {
