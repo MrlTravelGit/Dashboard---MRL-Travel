@@ -63,49 +63,107 @@ export default function BookingsPage() {
 
   const fetchBookings = async () => {
     setIsLoadingBookings(true);
-    let query = supabase
-      .from('bookings')
-      .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at')
-      .order('created_at', { ascending: false });
-
-    // Exemplo: se quiser filtrar por empresa, só faça se companyId estiver definido
-    // if (companyId) query = query.eq('company_id', companyId);
-
-    const { data, error } = await query;
-    if (!error && data) {
-      // Mapeia bookings simples, tratando JSONs e fallback seguro
-      const typedBookings: BookingFromDB[] = (data ?? []).map((b: any) => ({
-        ...b,
-        flights: Array.isArray(b.flights) ? b.flights : [],
-        hotels: Array.isArray(b.hotels) ? b.hotels : [],
-        car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
-        passengers: Array.isArray(b.passengers) ? b.passengers : [],
-      }));
-      setBookings(typedBookings);
-    } else if (error) {
-      console.error('Erro ao buscar reservas:', error);
-      toast({ title: 'Erro ao buscar reservas', description: error.message || String(error), variant: 'destructive' });
+    let timeoutId: any;
+    let finished = false;
+    try {
+      // Timeout de segurança
+      await Promise.race([
+        (async () => {
+          let query = supabase
+            .from('bookings')
+            .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at')
+            .order('created_at', { ascending: false });
+          const { data, error } = await query;
+          finished = true;
+          if (!error && data) {
+            const typedBookings: BookingFromDB[] = (data ?? []).map((b: any) => ({
+              ...b,
+              flights: Array.isArray(b.flights) ? b.flights : [],
+              hotels: Array.isArray(b.hotels) ? b.hotels : [],
+              car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
+              passengers: Array.isArray(b.passengers) ? b.passengers : [],
+            }));
+            setBookings(typedBookings);
+          } else if (error) {
+            const logObj = {
+              message: error.message,
+              code: error.code,
+              details: error.details,
+              hint: error.hint,
+              stack: error.stack,
+              user_id: (supabase.auth.user && supabase.auth.user()?.id) || 'desconhecido',
+            };
+            console.error('Erro ao buscar reservas:', logObj);
+            toast({ title: 'Erro ao buscar reservas', description: error.message || String(error), variant: 'destructive' });
+            if (!data || data.length === 0) {
+              console.warn('Possível bloqueio por RLS/policies. user_id:', logObj.user_id);
+            }
+          }
+        })(),
+        new Promise((_resolve, reject) => {
+          timeoutId = setTimeout(() => {
+            if (!finished) {
+              reject(new Error('Timeout ao buscar reservas (12s)'));
+            }
+          }, 12000);
+        })
+      ]);
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      toast({ title: 'Erro ao buscar reservas', description: err.message || String(err), variant: 'destructive' });
+      console.error('Erro ao buscar reservas (catch):', err);
+    } finally {
+      clearTimeout(timeoutId);
+      setIsLoadingBookings(false);
     }
-    setIsLoadingBookings(false);
   };
 
   useEffect(() => {
     let cancelled = false;
-    const fetchCompanies = async () => {
+    const fetchEmpresasDoUsuario = async () => {
+      setIsLoadingCompanies(true);
       try {
-        const { data, error } = await supabase
-          .from('companies')
-          .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at')
-          .order('name');
-        if (!error && data && !cancelled) {
-          setCompanies(data);
+        const user = supabase.auth.user && supabase.auth.user();
+        if (!user) {
+          setCompanies([]);
+          return;
         }
+        // Busca company_ids vinculados ao usuário
+        const { data: vinculos, error: vincErr } = await supabase
+          .from('company_users')
+          .select('company_id')
+          .eq('user_id', user.id);
+        if (vincErr) {
+          console.error('Erro ao buscar vínculos company_users:', vincErr);
+          setCompanies([]);
+          return;
+        }
+        const companyIds = (vinculos ?? []).map((v: any) => v.company_id);
+        if (companyIds.length === 0) {
+          setCompanies([]);
+          return;
+        }
+        // Busca empresas
+        const { data: companiesData, error: compErr } = await supabase
+          .from('companies')
+          .select('id, name')
+          .in('id', companyIds);
+        if (compErr) {
+          console.error('Erro ao buscar empresas:', compErr);
+          setCompanies([]);
+          return;
+        }
+        setCompanies(companiesData ?? []);
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        console.error('Erro ao buscar empresas (catch):', err);
+        setCompanies([]);
       } finally {
-        if (!cancelled) setIsLoadingCompanies(false);
+        setIsLoadingCompanies(false);
       }
     };
     const fetchAll = async () => {
-      await fetchCompanies();
+      await fetchEmpresasDoUsuario();
       await fetchBookings();
     };
     fetchAll();
