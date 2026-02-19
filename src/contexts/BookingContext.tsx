@@ -155,7 +155,7 @@ export function BookingProvider({ children }: { children: ReactNode }) {
 
     let query = supabase
       .from("bookings")
-      .select("*")
+      .select("id, name, company_id, created_at, flights, hotels, car_rentals, passengers")
       .order("created_at", { ascending: false });
 
     if (!isAdmin) {
@@ -164,30 +164,43 @@ export function BookingProvider({ children }: { children: ReactNode }) {
         setBookings([]);
         return;
       }
-        if (cid) {
-          query = query.eq("company_id", cid);
+      if (cid) {
+        query = query.eq("company_id", cid);
+      }
+    }
+
+    try {
+      const { data, error } = await query;
+      if (error || !data) {
+        if (error?.name === 'AbortError') {
+          // Silencia aborts (ex: navegação rápida)
+          return;
         }
-    }
+        console.error("Error fetching bookings:", error);
+        setBookings([]);
+        return;
+      }
 
-    const { data, error } = await query;
-    if (error || !data) {
-      console.error("Error fetching bookings:", error);
+      const typed: BookingRow[] = (data ?? []).map((b: any) => ({
+        id: b.id,
+        name: b.name,
+        company_id: b.company_id,
+        created_at: b.created_at,
+        flights: Array.isArray(b.flights) ? b.flights : [],
+        hotels: Array.isArray(b.hotels) ? b.hotels : [],
+        car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
+        passengers: Array.isArray(b.passengers) ? b.passengers : [],
+      }));
+
+      setBookings(typed);
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        // Silencia aborts (ex: navegação rápida)
+        return;
+      }
+      console.error("Exception fetching bookings:", err);
       setBookings([]);
-      return;
     }
-
-    const typed: BookingRow[] = (data ?? []).map((b: any) => ({
-      id: b.id,
-      name: b.name,
-      company_id: b.company_id,
-      created_at: b.created_at,
-      flights: Array.isArray(b.flights) ? b.flights : [],
-      hotels: Array.isArray(b.hotels) ? b.hotels : [],
-      car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
-      passengers: Array.isArray(b.passengers) ? b.passengers : [],
-    }));
-
-    setBookings(typed);
   };
 
   useEffect(() => {

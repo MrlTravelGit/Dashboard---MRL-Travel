@@ -61,148 +61,56 @@ export default function BookingsPage() {
     totalOriginal: '',
   });
 
-  // Utilitário para detalhar erros do Supabase
-  function getSupabaseErrorDetails(error: any) {
-    if (!error) return '';
-    return [
-      error.message && `Mensagem: ${error.message}`,
-      error.code && `Código: ${error.code}`,
-      error.details && `Detalhes: ${error.details}`,
-      error.hint && `Hint: ${error.hint}`,
-      error.status && `Status: ${error.status}`,
-      error.stack && `Stack: ${error.stack}`,
-    ].filter(Boolean).join('\n');
-  }
-
   const fetchBookings = async () => {
     setIsLoadingBookings(true);
     let query = supabase
       .from('bookings')
-      .select('*')
+      .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at')
       .order('created_at', { ascending: false });
 
-    try {
-      const { data, error } = await query;
-      if (!error && data) {
-        // Mapeia bookings simples, tratando JSONs e fallback seguro
-        const typedBookings: BookingFromDB[] = (data ?? []).map((b: any) => ({
-          ...b,
-          flights: Array.isArray(b.flights) ? b.flights : [],
-          hotels: Array.isArray(b.hotels) ? b.hotels : [],
-          car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
-          passengers: Array.isArray(b.passengers) ? b.passengers : [],
-        }));
-        setBookings(typedBookings);
-      } else if (error) {
-        const details = getSupabaseErrorDetails(error);
-        console.error('Erro ao buscar reservas:', details, error);
-        toast({
-          title: 'Erro ao buscar reservas',
-          description:
-            error.code === '42501' || error.code === 'PGRST301' || error.code === 'PGRST302'
-              ? 'Sem permissão para acessar reservas. Verifique permissões no Supabase (RLS).'
-              : error.message || String(error),
-          variant: 'destructive',
-        });
-      }
-    } catch (error: any) {
-      if (error?.name === 'AbortError') return;
-      const details = getSupabaseErrorDetails(error);
-      console.error('Erro inesperado ao buscar reservas:', details, error);
-      toast({
-        title: 'Erro ao buscar reservas',
-        description: error.message || String(error),
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoadingBookings(false);
+    // Exemplo: se quiser filtrar por empresa, só faça se companyId estiver definido
+    // if (companyId) query = query.eq('company_id', companyId);
+
+    const { data, error } = await query;
+    if (!error && data) {
+      // Mapeia bookings simples, tratando JSONs e fallback seguro
+      const typedBookings: BookingFromDB[] = (data ?? []).map((b: any) => ({
+        ...b,
+        flights: Array.isArray(b.flights) ? b.flights : [],
+        hotels: Array.isArray(b.hotels) ? b.hotels : [],
+        car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
+        passengers: Array.isArray(b.passengers) ? b.passengers : [],
+      }));
+      setBookings(typedBookings);
+    } else if (error) {
+      console.error('Erro ao buscar reservas:', error);
+      toast({ title: 'Erro ao buscar reservas', description: error.message || String(error), variant: 'destructive' });
     }
+    setIsLoadingBookings(false);
   };
 
-  // Carrega reservas ao entrar na página.
-  // Evita loop: roda uma vez e também quando status admin muda.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      if (cancelled) return;
-      await fetchBookings();
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
-
-  // Busca empresas vinculadas ao usuário para o select do modal
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchUserCompanies() {
-      // Carrega empresas somente quando o modal estiver aberto.
-      // Isso evita buscar antes de a sessão estar pronta e reduz requisições desnecessárias.
-      if (!open) {
-        setIsLoadingCompanies(false);
-        return;
-      }
-      setIsLoadingCompanies(true);
+    const fetchCompanies = async () => {
       try {
-        // Admin: listar todas as empresas (para cadastrar reserva em qualquer empresa)
-        if (isAdmin) {
-          const { data: allCompanies, error: allCompaniesError } = await supabase
-            .from('companies')
-            .select('id, name')
-            .order('name');
-
-          if (allCompaniesError) throw allCompaniesError;
-          if (!cancelled) setCompanies((allCompanies || []) as Company[]);
-          return;
+        const { data, error } = await supabase
+          .from('companies')
+          .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at')
+          .order('name');
+        if (!error && data && !cancelled) {
+          setCompanies(data);
         }
-
-        const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-        if (sessionErr) throw sessionErr;
-        const userId = sessionData.session?.user?.id;
-        if (!userId) {
-          setCompanies([]);
-          return;
-        }
-        // Buscar company_ids vinculados ao usuário
-        const { data: companyLinks, error: linkError } = await supabase
-          .from('company_users')
-          .select('company_id')
-          .eq('user_id', userId);
-        if (linkError) throw linkError;
-        const companyIds = (companyLinks || []).map((c: any) => c.company_id);
-        // Buscar empresas vinculadas
-        if (companyIds.length) {
-          const { data: companiesData, error: companiesError } = await supabase
-            .from('companies')
-            .select('id, name')
-            .in('id', companyIds)
-            .order('name');
-          if (companiesError) throw companiesError;
-          if (!cancelled) setCompanies((companiesData || []) as Company[]);
-        } else {
-          if (!cancelled) setCompanies([]);
-        }
-      } catch (error: any) {
-        if (error?.name === 'AbortError') return;
-        const details = getSupabaseErrorDetails(error);
-        console.error('Erro ao buscar empresas:', details, error);
-        toast({
-          title: 'Erro ao buscar empresas',
-          description:
-            error.code === '42501' || error.code === 'PGRST301' || error.code === 'PGRST302'
-              ? 'Sem permissão para acessar empresas. Verifique permissões no Supabase (RLS).'
-              : error.message || String(error),
-          variant: 'destructive',
-        });
-        if (!cancelled) setCompanies([]);
       } finally {
         if (!cancelled) setIsLoadingCompanies(false);
       }
-    }
-    fetchUserCompanies();
+    };
+    const fetchAll = async () => {
+      await fetchCompanies();
+      await fetchBookings();
+    };
+    fetchAll();
     return () => { cancelled = true; };
-  }, [open]);
+  }, []);
 
   const handleDeleteBooking = async (bookingId: string, bookingName: string) => {
     setIsDeletingId(bookingId);
@@ -538,7 +446,7 @@ export default function BookingsPage() {
         passport: p.passport,
       }));
 
-      // Cria reserva com passengers
+      // Cria reserva com todos os dados extraídos (inclusive hotels, flights, car_rentals, passengers)
       const { data: insertedBooking, error } = await supabase
         .from('bookings')
         .insert({
@@ -557,13 +465,6 @@ export default function BookingsPage() {
         .single();
 
       if (error) throw error;
-
-      const bookingId = insertedBooking?.id;
-
-      // Salva hotéis extraídos diretamente na coluna hotels do booking
-      if (bookingId && extractedData.hotels?.length > 0) {
-        await supabase.from('bookings').update({ hotels: extractedData.hotels }).eq('id', bookingId);
-      }
 
       // Auto-register employees if option is enabled and passengers were extracted
       let employeesCreated = 0;
@@ -630,7 +531,7 @@ export default function BookingsPage() {
       setFormData({ companyId: '', url: '', title: '', passengerName: '', totalPaid: '', totalOriginal: '' });
       setExtractedData(null);
       setAutoRegisterEmployees(true);
-      fetchBookings();
+      await fetchBookings();
       refreshBookingContext();
     } catch (error: any) {
       console.error('Submit error:', error);
