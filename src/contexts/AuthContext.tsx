@@ -43,6 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const lastRoleLoadForUserRef = useRef<string | null>(null);
   const visibilityRefreshRunningRef = useRef(false);
   const sessionUserIdRef = useRef<string | null>(null);
+  const isAdminRef = useRef<boolean>(false);
 
   // Guard para evitar reentrância de loadRoleAndCompany
   const loadingRoleRef = useRef<string | null>(null);
@@ -124,6 +125,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       if (!lastError) {
         setIsAdmin(isAdminValue);
+        isAdminRef.current = isAdminValue;
         setAppRole(isAdminValue ? 'admin' : 'user');
         try {
           if (isAdminValue) {
@@ -229,6 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           // Sem usuário autenticado, reseta estado
           setIsAdmin(false);
+          isAdminRef.current = false;
           setCompanyId(null);
           setAppRole(null);
         }
@@ -240,6 +243,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
         setSession(null);
         setIsAdmin(false);
+        isAdminRef.current = false;
         setCompanyId(null);
         setAppRole(null);
         setIsLoading(false);
@@ -256,24 +260,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log("[AUTH] onAuthStateChange event:", _event);
         }
 
+        const prevUserId = sessionUserIdRef.current;
+        const nextUserId = newSession?.user?.id ?? null;
+
         setSession(newSession);
         setUser(newSession?.user ?? null);
-        sessionUserIdRef.current = newSession?.user?.id ?? null;
+        sessionUserIdRef.current = nextUserId;
 
         if (isDev) {
           console.log("[AUTH] userId:", newSession?.user?.id);
         }
 
-        // Reset admin status ao trocar usuário
-        if (newSession?.user?.id) {
-          setIsAdmin(false);
-          setCompanyId(null);
-          setAppRole(null);
-          // Recarrega admin status para novo usuário
-          await loadAdminStatus(newSession.user.id);
+        // Só reseta permissões quando realmente mudou de usuário.
+        // Em eventos como TOKEN_REFRESHED, manter o estado evita "perder admin" por falha temporária.
+        if (nextUserId) {
+          if (nextUserId !== prevUserId) {
+            setIsAdmin(false);
+            isAdminRef.current = false;
+            setCompanyId(null);
+            setAppRole(null);
+          }
+          await loadAdminStatus(nextUserId);
         } else {
           // Logout
           setIsAdmin(false);
+          isAdminRef.current = false;
           setCompanyId(null);
           setAppRole(null);
         }
@@ -307,9 +318,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(nextSession?.user ?? null);
           sessionUserIdRef.current = nextUserId;
           setIsAdmin(false);
+          isAdminRef.current = false;
           setCompanyId(null);
           setAppRole(null);
           if (nextUserId) await loadAdminStatus(nextUserId);
+        } else if (nextUserId) {
+          // Mesmo usuário: se o estado de admin caiu por algum motivo, tenta recuperar.
+          // Importante: loadAdminStatus não deve derrubar isAdmin em caso de erro.
+          let lastKnown: string | null = null;
+          try {
+            lastKnown = localStorage.getItem('lastKnownAdmin');
+          } catch {
+            lastKnown = null;
+          }
+          if (!isAdminRef.current && lastKnown === '1') {
+            await loadAdminStatus(nextUserId);
+          }
         }
       } catch (e) {
         if (isDev) console.warn('[AUTH] visibility refresh failed:', e);
@@ -352,6 +376,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSession(null);
     sessionUserIdRef.current = null;
     setIsAdmin(false);
+    isAdminRef.current = false;
     setCompanyId(null);
     setAppRole(null);
     setIsLoading(false);

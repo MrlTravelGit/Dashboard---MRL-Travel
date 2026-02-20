@@ -36,7 +36,7 @@ interface BookingFromDB {
 }
 
 export default function BookingsPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const { refresh: refreshBookingContext } = useBooking();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -92,25 +92,70 @@ export default function BookingsPage() {
   useEffect(() => {
     let cancelled = false;
     const fetchCompanies = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('companies')
-          .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at')
-          .order('name');
-        if (!error && data && !cancelled) {
-          setCompanies(data);
+      if (!user?.id) {
+        if (!cancelled) {
+          setCompanies([]);
+          setIsLoadingCompanies(false);
         }
+        return;
+      }
+
+      setIsLoadingCompanies(true);
+      try {
+        // Admin: carrega todas as empresas
+        if (isAdmin) {
+          const { data, error } = await supabase
+            .from('companies')
+            .select('id, name')
+            .order('name');
+          if (error) throw error;
+          if (!cancelled) setCompanies((data as any) ?? []);
+          return;
+        }
+
+        // Não admin: carrega apenas empresas vinculadas em company_users
+        const { data: links, error: linkErr } = await supabase
+          .from('company_users')
+          .select('company_id')
+          .eq('user_id', user.id);
+
+        if (linkErr) throw linkErr;
+        const companyIds = (links ?? []).map((l: any) => l.company_id).filter(Boolean);
+
+        if (companyIds.length === 0) {
+          if (!cancelled) setCompanies([]);
+          return;
+        }
+
+        const { data: comps, error: compsErr } = await supabase
+          .from('companies')
+          .select('id, name')
+          .in('id', companyIds)
+          .order('name');
+
+        if (compsErr) throw compsErr;
+        if (!cancelled) setCompanies((comps as any) ?? []);
+      } catch (error: any) {
+        console.error('Erro ao buscar empresas:', error);
+        toast({
+          title: 'Erro ao carregar empresas',
+          description: error?.message || String(error),
+          variant: 'destructive',
+        });
+        if (!cancelled) setCompanies([]);
       } finally {
         if (!cancelled) setIsLoadingCompanies(false);
       }
     };
+
     const fetchAll = async () => {
       await fetchCompanies();
       await fetchBookings();
     };
+
     fetchAll();
     return () => { cancelled = true; };
-  }, []);
+  }, [user?.id, isAdmin]);
 
   const handleDeleteBooking = async (bookingId: string, bookingName: string) => {
     setIsDeletingId(bookingId);
