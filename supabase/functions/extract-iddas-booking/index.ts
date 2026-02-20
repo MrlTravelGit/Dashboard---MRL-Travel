@@ -569,6 +569,9 @@ const lines = tail
   }
 
   let pendingName = ""; // guarda nome quando vem em linha separada
+  let pendingBirth = ""; // guarda nascimento quando vier em linha separada
+
+  const isDateOnly = (s: string) => /^\d{2}\/\d{2}\/\d{4}$/.test((s || "").trim());
 
   for (let i = 0; i < passengerLines.length; i++) {
     const raw = passengerLines[i];
@@ -579,6 +582,7 @@ const lines = tail
     // ignora “Reservado por” e variações, e ignora empresas explícitas
     if (/^Reservado por\b/i.test(line)) {
       pendingName = "";
+      pendingBirth = "";
       continue;
     }
     // do not hardcode company names here; rely on looksLikeCompanyName() instead
@@ -587,12 +591,29 @@ const lines = tail
     const hasCPF =
       /\bCPF\b/i.test(line) ||
       /(\d{3}\.?\d{3}\.?\d{3}[-\s]?\d{2})/.test(line);
-
     if (!hasCPF) {
-      // pega nome antes de qualquer vírgula
-      const nameOnly = line.split(",")[0]?.trim() ?? "";
-      if (nameOnly && !looksLikeCompanyName(nameOnly)) {
-        pendingName = nameOnly;
+      const trimmed = line.trim();
+
+      // Se a data de nascimento vier em linha separada, guarde para usar no CPF logo abaixo
+      const labeledBirth = extractBirthFromPassengerLine(trimmed);
+      if (labeledBirth) {
+        pendingBirth = labeledBirth;
+        continue;
+      }
+
+      // Linha só com data (muito comum no IDDAS). Não deve sobrescrever o nome pendente.
+      if (isDateOnly(trimmed)) {
+        if (pendingName) pendingBirth = trimmed;
+        continue;
+      }
+
+      // pega nome antes de qualquer vírgula e só guarda se parecer nome de pessoa
+      const nameOnly = trimmed.split(',')[0]?.trim() ?? "";
+      const safe = sanitizePassengerName(nameOnly);
+      if (safe && !looksLikeCompanyName(safe) && !isLabelName(safe) && isProbablyPersonName(safe)) {
+        pendingName = safe;
+        // ao encontrar um novo nome, zere a data pendente para evitar associar errado
+        pendingBirth = "";
       }
       continue;
     }
@@ -618,7 +639,6 @@ const lines = tail
       nameCandidate = pendingName;
     }
 
-    pendingName = ""; // consumiu
 
     // telefone
     const phoneMatch = line.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
@@ -627,10 +647,13 @@ const lines = tail
     // email
     const emailMatch = line.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
     const email = emailMatch ? emailMatch[0].trim() : "";
-
     // data nascimento (somente quando for claramente nascimento)
-    const birthRaw = extractBirthFromPassengerLine(line);
+    const birthRaw = extractBirthFromPassengerLine(line) || (pendingBirth ? pendingBirth : "");
     const birthDate = birthRaw ? (toISODateFromBR(birthRaw) || "") : "";
+
+    // consumiu pendências
+    pendingName = "";
+    pendingBirth = "";
 
     // Se não conseguimos um nome válido, ainda assim mantenha o CPF no mapa
     // quando a página indica que há mais passageiros do que capturamos.
