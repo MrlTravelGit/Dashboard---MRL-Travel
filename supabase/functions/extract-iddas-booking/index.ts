@@ -370,6 +370,9 @@ function extractPassengers(pageText: string): Passenger[] {
   // Restrict to the passenger block to avoid unrelated CPFs later in the page.
   // This also increases accuracy for pages where passengers appear before flights/hotel.
   const lower = tailFull.toLowerCase();
+  // Atenção: evite marcadores genéricos como "total" ou "pagamento".
+  // Em alguns layouts do IDDAS (principalmente Azul), "Valor Total" aparece
+  // dentro do mesmo bloco visual de passageiros e cortava o trecho cedo demais.
   const endMarkers = [
     "voo de ida",
     "voo de volta",
@@ -377,9 +380,6 @@ function extractPassengers(pageText: string): Passenger[] {
     "hotel",
     "itinerário",
     "itinerario",
-    "pagamento",
-    "total",
-    "forma de pagamento",
   ];
   let endIdx = tailFull.length;
   for (const m of endMarkers) {
@@ -391,7 +391,10 @@ function extractPassengers(pageText: string): Passenger[] {
   const map = new Map<string, Passenger>();
 
   // Expected count (when present) helps decide when to run a stronger fallback.
-  const expectedMatch = tail.match(/Passageiros\s*:\s*(\d+)/i) ||
+  const expectedMatch =
+    tailFull.match(/Passageiros\s*:\s*(\d+)/i) ||
+    tailFull.match(/Passageiros[\s:]*\s*(\d+)\s*Adultos?/i) ||
+    tail.match(/Passageiros\s*:\s*(\d+)/i) ||
     tail.match(/Passageiros[\s:]*\s*(\d+)\s*Adultos?/i);
   const expectedCount = expectedMatch ? Number(expectedMatch[1]) : null;
 
@@ -446,12 +449,14 @@ function extractPassengers(pageText: string): Passenger[] {
     "giu",
   );
 
+  const scanText = tailFull;
+
   let m1: RegExpExecArray | null;
-  while ((m1 = rePrimary.exec(tail)) !== null) {
+  while ((m1 = rePrimary.exec(scanText)) !== null) {
     const name = (m1[1] || "").trim();
     const birth = (m1[2] || "").trim();
     const cpfDigits = normalizeCPF(m1[3] || "");
-    const window = tail.slice(m1.index, Math.min(tail.length, m1.index + 320));
+    const window = scanText.slice(m1.index, Math.min(scanText.length, m1.index + 420));
 
     const phoneMatch = window.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
     const emailMatch = window.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
@@ -474,11 +479,11 @@ function extractPassengers(pageText: string): Passenger[] {
   );
 
   let m2: RegExpExecArray | null;
-  while ((m2 = reSecondary.exec(tail)) !== null) {
+  while ((m2 = reSecondary.exec(scanText)) !== null) {
     const name = (m2[1] || "").trim();
     const cpfDigits = normalizeCPF(m2[2] || "");
     const birth = (m2[3] || "").trim();
-    const window = tail.slice(m2.index, Math.min(tail.length, m2.index + 340));
+    const window = scanText.slice(m2.index, Math.min(scanText.length, m2.index + 460));
 
     const phoneMatch = window.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
     const emailMatch = window.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
@@ -514,7 +519,7 @@ const lines = tail
     if (!line) break;
 
     if (
-      /^(Hotel|Hospedagem|Voo|Voos|Pagamento|Total|Forma de pagamento|Localizador|Código:)/i.test(
+      /^(Hotel|Hospedagem|Voo|Voos|Forma de pagamento|Localizador|Código:)/i.test(
         line
       )
     ) {
@@ -571,18 +576,6 @@ const lines = tail
 
     const cpfDigits = normalizeCPF(cpfMatch[1] ?? cpfMatch[0]);
     if (cpfDigits.length !== 11) continue;
-    const existing = map.get(cpfDigits);
-    if (existing) {
-      // Merge details when we see the same CPF again (common in inconsistent layouts)
-      if (!existing.fullName || existing.fullName.length < nameCandidate.length) {
-        existing.fullName = nameCandidate;
-      }
-      if (!existing.birthDate && birthDate) existing.birthDate = birthDate;
-      if (!existing.phone && phone) existing.phone = phone;
-      if (!existing.email && email) existing.email = email;
-      map.set(cpfDigits, existing);
-      continue;
-    }
 
     // extrai nome: pode estar na própria linha antes da vírgula, ou na linha anterior (pendingName)
     let nameCandidate = "";
@@ -620,6 +613,20 @@ const lines = tail
     const passportMatch = line.match(/Passaporte[:\s]*([A-Z0-9-]+)/i);
     const passport = passportMatch ? passportMatch[1].trim() : "";
 
+    const existing = map.get(cpfDigits);
+    if (existing) {
+      // Merge details when we see the same CPF again (common in inconsistent layouts)
+      if (!existing.fullName || existing.fullName.length < nameCandidate.length) {
+        existing.fullName = nameCandidate;
+      }
+      if (!existing.birthDate && birthDate) existing.birthDate = birthDate;
+      if (!existing.phone && phone) existing.phone = phone;
+      if (!existing.email && email) existing.email = email;
+      if (!existing.passport && passport) existing.passport = passport;
+      map.set(cpfDigits, existing);
+      continue;
+    }
+
     map.set(cpfDigits, {
       fullName: nameCandidate,
       birthDate: birthDate || "",
@@ -635,25 +642,21 @@ const lines = tail
   // infer the closest name before each CPF. We run this when:
   // - nothing was extracted, OR
   // - the page indicates more passengers than we found (common Azul/Latam layouts).
+  // Se estiver faltando passageiro, faça o fallback no trecho mais amplo (tailFull).
+  // Alguns layouts colocam o bloco azul de passageiros antes de "Voo de ida" e
+  // podem conter textos que fariam o recorte (tail) perder linhas.
+  const fallbackText = (expectedCount !== null && map.size < expectedCount) ? tailFull : tail;
+
   if (map.size === 0 || (expectedCount !== null && map.size < expectedCount)) {
     const cpfRe = /(\d{3}\.?(?:\d{3})\.?(?:\d{3})[-\s]?\d{2})/g;
     let m: RegExpExecArray | null;
-    while ((m = cpfRe.exec(tail)) !== null) {
+    while ((m = cpfRe.exec(fallbackText)) !== null) {
       const cpfDigits = normalizeCPF(m[1]);
       if (cpfDigits.length !== 11) continue;
-      const existing = map.get(cpfDigits);
-      if (existing) {
-        if (!existing.fullName || existing.fullName.length < nameCandidate.length) {
-          existing.fullName = nameCandidate;
-        }
-        if (!existing.birthDate && birthDate) existing.birthDate = birthDate;
-        map.set(cpfDigits, existing);
-        continue;
-      }
-
       const idx = m.index;
-      const before = tail.slice(Math.max(0, idx - 900), idx);
-      const after = tail.slice(idx, Math.min(tail.length, idx + 260));      const nameCandidate = bestNameFromContext(before);
+      const before = fallbackText.slice(Math.max(0, idx - 1100), idx);
+      const after = fallbackText.slice(idx, Math.min(fallbackText.length, idx + 420));
+      const nameCandidate = bestNameFromContext(before);
       if (!nameCandidate) continue;
       if (looksLikeCompanyName(nameCandidate)) continue;
       if (!isProbablyPersonName(nameCandidate)) continue;
@@ -666,15 +669,26 @@ const lines = tail
       const emailMatch = after.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
       const email = emailMatch ? emailMatch[0].trim() : "";
 
-      map.set(cpfDigits, {
-        fullName: nameCandidate,
-        birthDate: birthDate || "",
-        cpf: cpfDigits,
-        phone: phone || "",
-        email: email || "",
-        passport: "",
-        passportExpiry: "",
-      });
+      const existing = map.get(cpfDigits);
+      if (existing) {
+        if (!existing.fullName || existing.fullName.length < nameCandidate.length) {
+          existing.fullName = nameCandidate;
+        }
+        if (!existing.birthDate && birthDate) existing.birthDate = birthDate;
+        if (!existing.phone && phone) existing.phone = phone;
+        if (!existing.email && email) existing.email = email;
+        map.set(cpfDigits, existing);
+      } else {
+        map.set(cpfDigits, {
+          fullName: nameCandidate,
+          birthDate: birthDate || "",
+          cpf: cpfDigits,
+          phone: phone || "",
+          email: email || "",
+          passport: "",
+          passportExpiry: "",
+        });
+      }
     }
   }
 
@@ -694,6 +708,8 @@ const lines = tail
     const e = d.slice(9, 11);
     return `${escapeRe(a)}\\D*${escapeRe(b)}\\D*${escapeRe(c)}\\D*${escapeRe(e)}`;
   };
+
+  const improveText = tailFull;
 
   const findBestNameAndBirthByCpf = (cpfDigits: string) => {
     const cpfFlex = cpfToFlexiblePattern(cpfDigits);
@@ -721,7 +737,7 @@ const lines = tail
     let bestBirth = "";
 
     for (const re of patterns) {
-      const m = tail.match(re);
+      const m = improveText.match(re);
       if (!m) continue;
       const name = (m[1] || "").trim();
       const birth = (m[2] || "").trim();
@@ -852,7 +868,9 @@ serve(async (req: Request) => {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
-    }const fetchHtmlOnce = async (attempt: number) => {
+	    }
+
+	    const fetchHtmlOnce = async (attempt: number) => {
   const headers = new Headers();
   headers.set(
     "user-agent",
