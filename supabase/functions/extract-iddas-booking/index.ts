@@ -261,9 +261,35 @@ function extractPassengers(pageText: string): Passenger[] {
     text.match(/\bPassageiro\(s\)\b/i);
 
   const startIdx = secMatch?.index ?? 0;
-  const tail = text.slice(startIdx);
+  const tailFull = text.slice(startIdx);
+
+  // Restrict to the passenger block to avoid unrelated CPFs later in the page.
+  // This also increases accuracy for pages where passengers appear before flights/hotel.
+  const lower = tailFull.toLowerCase();
+  const endMarkers = [
+    "voo de ida",
+    "voo de volta",
+    "hospedagem",
+    "hotel",
+    "itinerário",
+    "itinerario",
+    "pagamento",
+    "total",
+    "forma de pagamento",
+  ];
+  let endIdx = tailFull.length;
+  for (const m of endMarkers) {
+    const i = lower.indexOf(m, 10);
+    if (i > -1 && i < endIdx) endIdx = i;
+  }
+  const tail = tailFull.slice(0, endIdx);
 
   const map = new Map<string, Passenger>();
+
+  // Expected count (when present) helps decide when to run a stronger fallback.
+  const expectedMatch = tail.match(/Passageiros\s*:\s*(\d+)/i) ||
+    tail.match(/Passageiros[\s:]*\s*(\d+)\s*Adultos?/i);
+  const expectedCount = expectedMatch ? Number(expectedMatch[1]) : null;
 
   // 0) High-recall pass: some IDDAS layouts collapse the whole reservation into
   // a single visual line. In those cases, relying on "\n" boundaries fails.
@@ -290,8 +316,9 @@ function extractPassengers(pageText: string): Passenger[] {
       });
     }
 
-    // Format B: "NOME ... CPF: 000.000.000-00 ... Nasc: dd/mm/aaaa"
-    const reB = /([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{4,}?)\s*(?:,|\s)+.*?\bCPF\b[:\s]*([0-9.\- ]{11,14}).{0,160}?\bNasc\b[:\s]*([0-9]{2}\/\d{2}\/\d{4})/gi;
+    // Format B: "NOME ... CPF: 000.000.000-00" and optionally "Nasc: dd/mm/aaaa"
+    // Some pages include birth date, others don't. We capture both.
+    const reB = /([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{4,}?)\s*(?:,|\s)+.*?\bCPF\b[:\s]*([0-9.\- ]{11,14})(?:.{0,180}?\bNasc\b[:\s]*([0-9]{2}\/\d{2}\/\d{4}))?/gi;
     let mB: RegExpExecArray | null;
     while ((mB = reB.exec(tail)) !== null) {
       const name = (mB[1] || "").trim();
@@ -302,7 +329,7 @@ function extractPassengers(pageText: string): Passenger[] {
       if (map.has(cpfDigits)) continue;
       map.set(cpfDigits, {
         fullName: name,
-        birthDate: toISODateFromBR(birth) || "",
+        birthDate: birth ? (toISODateFromBR(birth) || "") : "",
         cpf: cpfDigits,
         phone: "",
         email: "",
@@ -436,23 +463,25 @@ function extractPassengers(pageText: string): Passenger[] {
     });
   }
 
-  // Global fallback: scan for CPF occurrences anywhere and try to infer name nearby.
-  // This helps when text comes in a single line or headings were removed.
-  if (map.size === 0) {
+  // Strong fallback: scan for CPF occurrences inside the passenger block and
+  // infer the closest name before each CPF. We run this when:
+  // - nothing was extracted, OR
+  // - the page indicates more passengers than we found (common Azul/Latam layouts).
+  if (map.size === 0 || (expectedCount !== null && map.size < expectedCount)) {
     const cpfRe = /(\d{3}\.?(?:\d{3})\.?(?:\d{3})[-\s]?\d{2})/g;
     let m: RegExpExecArray | null;
-    while ((m = cpfRe.exec(text)) !== null) {
+    while ((m = cpfRe.exec(tail)) !== null) {
       const cpfDigits = normalizeCPF(m[1]);
       if (cpfDigits.length !== 11) continue;
       if (map.has(cpfDigits)) continue;
 
       const idx = m.index;
-      const before = text.slice(Math.max(0, idx - 140), idx);
-      const after = text.slice(idx, Math.min(text.length, idx + 220));
+      const before = tail.slice(Math.max(0, idx - 180), idx);
+      const after = tail.slice(idx, Math.min(tail.length, idx + 260));
 
-      // Try to locate the last plausible name chunk before the CPF.
-      // Accept uppercase / title case names with accents.
-      const nameMatch = before.match(/([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,6})\s*[,\-–]?\s*$/);
+      // Find the last plausible name chunk before the CPF.
+      // Accept uppercase and title-case names with accents.
+      const nameMatch = before.match(/([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,7})\s*[,:;\-–]?\s*$/);
       const nameCandidate = (nameMatch?.[1] || "").trim();
       if (!nameCandidate) continue;
       if (looksLikeCompanyName(nameCandidate)) continue;
