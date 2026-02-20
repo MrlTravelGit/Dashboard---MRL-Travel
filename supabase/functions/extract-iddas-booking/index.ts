@@ -311,7 +311,7 @@ function getExpectedPassengerCount(text: string): number | null {
 
 // Name pattern that accepts connectors like "de", "da", "dos"
 const NAME_CONNECTORS = "(?:de|da|do|dos|das|e|d'|del|della|van|von|la|le)";
-const NAME_WORD = "[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÀ-ÿ'’.-]{1,}";
+const NAME_WORD = "\\p{Lu}[\\p{L}'’\\.\\-]{1,}";
 const NAME_PART = `(?:${NAME_WORD}|${NAME_CONNECTORS})`;
 const NAME_CAPTURE = `(${NAME_WORD}(?:\\s+${NAME_PART}){1,10})`;
 
@@ -442,8 +442,8 @@ function extractPassengers(pageText: string): Passenger[] {
 
   // Primary format: "NOME COMPLETO, dd/mm/aaaa, CPF 000.000.000-00, ... "
   const rePrimary = new RegExp(
-    `${NAME_CAPTURE}\s*,\s*(\d{2}\/\d{2}\/\d{4})\s*,\s*CPF\s*([0-9.\- ]{11,14})`,
-    "gi",
+    `${NAME_CAPTURE}\\s*,\\s*(\\d{2}\\/\\d{2}\\/\\d{4})\\s*,\\s*CPF\\s*([0-9.\\- ]{11,14})`,
+    "giu",
   );
 
   let m1: RegExpExecArray | null;
@@ -469,8 +469,8 @@ function extractPassengers(pageText: string): Passenger[] {
 
   // Secondary format: "NOME ... CPF: ... Nasc: dd/mm/aaaa"
   const reSecondary = new RegExp(
-    `${NAME_CAPTURE}[\s\S]{0,180}?\bCPF\b[:\s]*([0-9.\- ]{11,14})(?:[\s\S]{0,260}?\bNasc\b[:\s]*(\d{2}\/\d{2}\/\d{4}))?`,
-    "gi",
+    `${NAME_CAPTURE}[\\s\\S]{0,180}?\\bCPF\\b[:\\s]*([0-9.\\- ]{11,14})(?:[\\s\\S]{0,260}?\\bNasc\\b[:\\s]*(\\d{2}\\/\\d{2}\\/\\d{4}))?`,
+    "giu",
   );
 
   let m2: RegExpExecArray | null;
@@ -700,22 +700,22 @@ const lines = tail
     if (!cpfFlex) return { name: "", birth: "" };
 
         const patterns: RegExp[] = [
-      // "NOME COMPLETO, dd/mm/aaaa, CPF xxx"
-      new RegExp(
-        `${NAME_CAPTURE}\s*,\s*(\d{2}\/\d{2}\/\d{4})\s*,\s*CPF\s*${cpfFlex}`,
-        "i",
-      ),
-      // "NOME COMPLETO ... CPF: xxx ... Nasc: dd/mm/aaaa"
-      new RegExp(
-        `${NAME_CAPTURE}[\s\S]{0,180}?\bCPF\b[:\s]*${cpfFlex}(?:[\s\S]{0,260}?\bNasc\b[:\s]*(\d{2}\/\d{2}\/\d{4}))?`,
-        "i",
-      ),
-      // "CPF: xxx" e procurar nome completo imediatamente antes
-      new RegExp(
-        `${NAME_CAPTURE}\s*[,;:]?\s*CPF\s*[:\s]*${cpfFlex}`,
-        "i",
-      ),
-    ];
+          // "NOME COMPLETO, dd/mm/aaaa, CPF xxx"
+          new RegExp(
+            `${NAME_CAPTURE}\\s*,\\s*(\\d{2}\\/\\d{2}\\/\\d{4})\\s*,\\s*CPF\\s*${cpfFlex}`,
+            "iu",
+          ),
+          // "NOME COMPLETO ... CPF: xxx ... Nasc: dd/mm/aaaa"
+          new RegExp(
+            `${NAME_CAPTURE}[\\s\\S]{0,180}?\\bCPF\\b[:\\s]*${cpfFlex}(?:[\\s\\S]{0,260}?\\bNasc\\b[:\\s]*(\\d{2}\\/\\d{2}\\/\\d{4}))?`,
+            "iu",
+          ),
+          // "CPF: xxx" e procurar nome completo imediatamente antes
+          new RegExp(
+            `${NAME_CAPTURE}\\s*[,;:]?\\s*CPF\\s*[:\\s]*${cpfFlex}`,
+            "iu",
+          ),
+        ];
 
     let bestName = "";
     let bestBirth = "";
