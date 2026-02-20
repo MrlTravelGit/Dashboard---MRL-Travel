@@ -560,6 +560,87 @@ function extractPassengers(pageText: string): Passenger[] {
     }
   }
 
+  // Pós-processamento: quando o nome veio como 1 palavra (ex: "Victor"),
+  // tentar promover para nome completo usando o CPF como chave.
+  // Isso melhora bastante a assertividade em alguns layouts do IDDAS.
+  const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const cpfToFlexiblePattern = (cpfDigits: string) => {
+    // Constrói um padrão que aceita pontuação e espaços entre os blocos do CPF
+    // Ex: 12345678900 -> 123\D*456\D*789\D*00
+    const d = (cpfDigits || "").replace(/\D/g, "");
+    if (d.length !== 11) return "";
+    const a = d.slice(0, 3);
+    const b = d.slice(3, 6);
+    const c = d.slice(6, 9);
+    const e = d.slice(9, 11);
+    return `${escapeRe(a)}\\D*${escapeRe(b)}\\D*${escapeRe(c)}\\D*${escapeRe(e)}`;
+  };
+
+  const findBestNameAndBirthByCpf = (cpfDigits: string) => {
+    const cpfFlex = cpfToFlexiblePattern(cpfDigits);
+    if (!cpfFlex) return { name: "", birth: "" };
+
+    const patterns: RegExp[] = [
+      // "NOME COMPLETO, dd/mm/aaaa, CPF xxx"
+      new RegExp(
+        `([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,7})\\s*,\\s*(\\d{2}\\/\\d{2}\\/\\d{4})\\s*,\\s*CPF\\s*${cpfFlex}`,
+        "i",
+      ),
+      // "NOME COMPLETO ... CPF: xxx ... Nasc: dd/mm/aaaa"
+      new RegExp(
+        `([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,7}).{0,140}?\\bCPF\\b[:\\s]*${cpfFlex}(?:.{0,220}?\\bNasc\\b[:\\s]*(\\d{2}\\/\\d{2}\\/\\d{4}))?`,
+        "i",
+      ),
+      // "CPF: xxx" e procurar nome completo imediatamente antes
+      new RegExp(
+        `([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,7})\\s*[,;:]?\\s*CPF\\s*[:\\s]*${cpfFlex}`,
+        "i",
+      ),
+    ];
+
+    let bestName = "";
+    let bestBirth = "";
+
+    for (const re of patterns) {
+      const m = tail.match(re);
+      if (!m) continue;
+      const name = (m[1] || "").trim();
+      const birth = (m[2] || "").trim();
+      if (!name || looksLikeCompanyName(name) || isLabelName(name)) continue;
+
+      const wordCount = name.split(/\\s+/).filter(Boolean).length;
+      const bestWordCount = bestName
+        ? bestName.split(/\\s+/).filter(Boolean).length
+        : 0;
+
+      if (wordCount >= 2 && wordCount >= bestWordCount) {
+        bestName = name;
+        if (birth) bestBirth = birth;
+      }
+    }
+
+    return { name: bestName, birth: bestBirth };
+  };
+
+  for (const [cpf, p] of map.entries()) {
+    const currentName = (p.fullName || "").trim();
+    const words = currentName.split(/\s+/).filter(Boolean);
+
+    // Se veio só 1 palavra, tenta melhorar.
+    if (words.length < 2) {
+      const improved = findBestNameAndBirthByCpf(cpf);
+      if (improved.name) p.fullName = improved.name;
+      if (!p.birthDate && improved.birth) p.birthDate = toISODateFromBR(improved.birth) || "";
+    }
+
+    // Se já tem nome completo mas faltou nascimento, tenta buscar pelo CPF.
+    if (p.fullName && !p.birthDate) {
+      const improved = findBestNameAndBirthByCpf(cpf);
+      if (improved.birth) p.birthDate = toISODateFromBR(improved.birth) || "";
+    }
+  }
+
   return Array.from(map.values());
 }
 

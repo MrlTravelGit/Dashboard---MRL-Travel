@@ -99,6 +99,7 @@ export default function LoginPage() {
                     id="login-email"
                     type="email"
                     placeholder="seu@email.com"
+                    autoComplete="email"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     required
@@ -110,6 +111,7 @@ export default function LoginPage() {
                     id="login-password"
                     type="password"
                     placeholder="••••••••"
+                    autoComplete="current-password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     required
@@ -136,6 +138,7 @@ export default function LoginPage() {
                     id="signup-name"
                     type="text"
                     placeholder="Seu nome completo"
+                    autoComplete="name"
                     value={signUpName}
                     onChange={(e) => setSignUpName(e.target.value)}
                     required
@@ -147,6 +150,7 @@ export default function LoginPage() {
                     id="signup-email"
                     type="email"
                     placeholder="seu@email.com"
+                    autoComplete="email"
                     value={signUpEmail}
                     onChange={(e) => setSignUpEmail(e.target.value)}
                     required
@@ -158,6 +162,7 @@ export default function LoginPage() {
                     id="signup-password"
                     type="password"
                     placeholder="••••••••"
+                    autoComplete="new-password"
                     value={signUpPassword}
                     onChange={(e) => setSignUpPassword(e.target.value)}
                     required
