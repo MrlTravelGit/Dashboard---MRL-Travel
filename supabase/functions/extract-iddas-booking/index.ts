@@ -817,6 +817,80 @@ const lines = tail
 
   const improveText = tailFull;
 
+  // State-machine fallback over the passenger block.
+  // Some IDDAS pages render passengers across multiple lines:
+  //   NAME
+  //   dd/mm/yyyy
+  //   CPF: xxx Tel: ...
+  // Regex-only passes can miss these. This pass is safe because it only
+  // updates passengers keyed by CPF.
+  {
+    let pendingName = "";
+    let pendingBirthBR = "";
+
+    const normalizeLine = (line: string) => {
+      return cleanSpacesLoose(line)
+        .replace(/^[^\p{L}\p{N}]+/gu, "")
+        .trim();
+    };
+
+    const lines = tailFull.split(/\n+/g).map((l) => normalizeLine(l)).filter(Boolean);
+
+    for (const raw of lines) {
+      const line = raw;
+
+      // Date-only line (often birth date right after the name)
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(line)) {
+        pendingBirthBR = line;
+        continue;
+      }
+
+      const cpfMatch = line.match(/\bCPF\b\s*[:\s]*([0-9.\-\s]{11,16})/i);
+      if (cpfMatch) {
+        const cpfDigits = normalizeCPF(cpfMatch[1] || "");
+        if (cpfDigits.length === 11) {
+          const phoneMatch = line.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
+          const emailMatch = line.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+          const birthFromLine = extractBirthFromPassengerLine(line);
+
+          const existing = map.get(cpfDigits) || {
+            fullName: "",
+            birthDate: "",
+            cpf: cpfDigits,
+            phone: "",
+            email: "",
+            passport: "",
+            passportExpiry: "",
+          };
+
+          const candidateName = sanitizePassengerName(pendingName);
+          if (!existing.fullName && candidateName && !looksLikeCompanyName(candidateName) && isProbablyPersonName(candidateName)) {
+            existing.fullName = candidateName;
+          }
+
+          const br = birthFromLine || pendingBirthBR;
+          if (!existing.birthDate && br) {
+            existing.birthDate = toISODateFromBR(br) || "";
+          }
+
+          if (!existing.phone && phoneMatch) existing.phone = phoneMatch[0].trim();
+          if (!existing.email && emailMatch) existing.email = emailMatch[0].trim();
+
+          map.set(cpfDigits, existing);
+        }
+
+        pendingName = "";
+        pendingBirthBR = "";
+        continue;
+      }
+
+      const candidate = sanitizePassengerName(line);
+      if (candidate && !looksLikeCompanyName(candidate) && isProbablyPersonName(candidate)) {
+        pendingName = candidate;
+      }
+    }
+  }
+
   const findBestNameAndBirthByCpf = (cpfDigits: string) => {
     const cpfFlex = cpfToFlexiblePattern(cpfDigits);
     if (!cpfFlex) return { name: "", birth: "" };
