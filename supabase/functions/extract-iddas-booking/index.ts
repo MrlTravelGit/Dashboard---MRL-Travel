@@ -263,6 +263,55 @@ function extractPassengers(pageText: string): Passenger[] {
   const startIdx = secMatch?.index ?? 0;
   const tail = text.slice(startIdx);
 
+  const map = new Map<string, Passenger>();
+
+  // 0) High-recall pass: some IDDAS layouts collapse the whole reservation into
+  // a single visual line. In those cases, relying on "\n" boundaries fails.
+  // We first attempt global patterns over the passenger section.
+  {
+    // Format A: "NOME, dd/mm/aaaa, CPF 000.000.000-00, (xx) 99999-9999, email"
+    const reA = /([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{4,})\s*,\s*(\d{2}\/\d{2}\/\d{4})\s*,\s*CPF\s*([0-9.\- ]{11,14})(?:\s*,\s*((?:\(\d{2}\)\s*)?\d{4,5}-\d{4}|\b\d{10,11}\b))?(?:\s*,\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}))?/gi;
+    let mA: RegExpExecArray | null;
+    while ((mA = reA.exec(tail)) !== null) {
+      const name = (mA[1] || "").trim();
+      const birth = (mA[2] || "").trim();
+      const cpfDigits = normalizeCPF(mA[3] || "");
+      if (!name || looksLikeCompanyName(name)) continue;
+      if (cpfDigits.length !== 11) continue;
+      if (map.has(cpfDigits)) continue;
+      map.set(cpfDigits, {
+        fullName: name,
+        birthDate: toISODateFromBR(birth) || "",
+        cpf: cpfDigits,
+        phone: (mA[4] || "").trim(),
+        email: (mA[5] || "").trim(),
+        passport: "",
+        passportExpiry: "",
+      });
+    }
+
+    // Format B: "NOME ... CPF: 000.000.000-00 ... Nasc: dd/mm/aaaa"
+    const reB = /([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{4,}?)\s*(?:,|\s)+.*?\bCPF\b[:\s]*([0-9.\- ]{11,14}).{0,160}?\bNasc\b[:\s]*([0-9]{2}\/\d{2}\/\d{4})/gi;
+    let mB: RegExpExecArray | null;
+    while ((mB = reB.exec(tail)) !== null) {
+      const name = (mB[1] || "").trim();
+      const cpfDigits = normalizeCPF(mB[2] || "");
+      const birth = (mB[3] || "").trim();
+      if (!name || looksLikeCompanyName(name)) continue;
+      if (cpfDigits.length !== 11) continue;
+      if (map.has(cpfDigits)) continue;
+      map.set(cpfDigits, {
+        fullName: name,
+        birthDate: toISODateFromBR(birth) || "",
+        cpf: cpfDigits,
+        phone: "",
+        email: "",
+        passport: "",
+        passportExpiry: "",
+      });
+    }
+  }
+
   const lines = tail
     .split("\n")
     .map((l) => l.replace(/^[-•\u2022]+\s*/, "").trim())
@@ -270,6 +319,13 @@ function extractPassengers(pageText: string): Passenger[] {
 
   // coletar linhas até começar outro bloco
   const passengerLines: string[] = [];
+
+  // Some layouts render "Passageiros: X Adultos" and the first passenger on the same line.
+  // Include line 0 if it already contains CPF data.
+  if (lines[0] && /(\bCPF\b|\d{3}\.?(?:\d{3})\.?(?:\d{3})[-\s]?\d{2})/i.test(lines[0])) {
+    passengerLines.push(lines[0]);
+  }
+
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     if (!line) break;
@@ -294,8 +350,6 @@ function extractPassengers(pageText: string): Passenger[] {
     }
   }
 
-  const map = new Map<string, Passenger>();
-
   let pendingName = ""; // guarda nome quando vem em linha separada
 
   for (let i = 0; i < passengerLines.length; i++) {
@@ -309,7 +363,7 @@ function extractPassengers(pageText: string): Passenger[] {
       pendingName = "";
       continue;
     }
-    if (line.toUpperCase().includes('SABIA ADMINISTRAÇÃO LTDA')) continue;
+    // do not hardcode company names here; rely on looksLikeCompanyName() instead
 
     // se a linha parece só o nome (sem CPF), guarda e segue
     const hasCPF =
