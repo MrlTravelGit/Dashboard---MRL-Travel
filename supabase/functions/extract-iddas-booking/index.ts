@@ -345,7 +345,7 @@ function extractPassengers(pageText: string): Passenger[] {
   // We first attempt global patterns over the passenger section.
   {
     // Format A: "NOME, dd/mm/aaaa, CPF 000.000.000-00, (xx) 99999-9999, email"
-    const reA = /([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{4,})\s*,\s*(\d{2}\/\d{2}\/\d{4})\s*,\s*CPF\s*([0-9.\- ]{11,14})(?:\s*,\s*((?:\(\d{2}\)\s*)?\d{4,5}-\d{4}|\b\d{10,11}\b))?(?:\s*,\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}))?/gi;
+    const reA = /([A-ZÀ-ÿ][A-Za-zÀ-ÿ'´`^~.\-]+(?:\s+(?:de|da|do|dos|das|e|d'|di|del|van|von)?\s*[A-Za-zÀ-ÿ'´`^~.\-]+){1,12})\s*,\s*(\d{2}\/\d{2}\/\d{4})\s*,\s*CPF\s*([0-9.\- ]{11,14})(?:\s*,\s*((?:\(\d{2}\)\s*)?\d{4,5}-\d{4}|\b\d{10,11}\b))?(?:\s*,\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}))?/gim;
     let mA: RegExpExecArray | null;
     while ((mA = reA.exec(tail)) !== null) {
       const name = (mA[1] || "").trim();
@@ -368,7 +368,7 @@ function extractPassengers(pageText: string): Passenger[] {
 
     // Format B: "NOME ... CPF: 000.000.000-00" and optionally "Nasc: dd/mm/aaaa"
     // Some pages include birth date, others don't. We capture both.
-    const reB = /([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{4,}?)\s*(?:,|\s)+.*?\bCPF\b[:\s]*([0-9.\- ]{11,14})(?:.{0,180}?\bNasc\b[:\s]*([0-9]{2}\/\d{2}\/\d{4}))?/gi;
+    const reB = /([A-ZÀ-ÿ][A-Za-zÀ-ÿ'´`^~.\-]+(?:\s+(?:de|da|do|dos|das|e|d'|di|del|van|von)?\s*[A-Za-zÀ-ÿ'´`^~.\-]+){0,12})\s*(?:,|\s)+.*?\bCPF\b[:\s]*([0-9.\- ]{11,14})(?:.{0,220}?\bNasc\b[:\s]*([0-9]{2}\/\d{2}\/\d{4}))?/gim;
     let mB: RegExpExecArray | null;
     while ((mB = reB.exec(tail)) !== null) {
       const name = (mB[1] || "").trim();
@@ -533,8 +533,23 @@ function extractPassengers(pageText: string): Passenger[] {
 
       // Find the last plausible name chunk before the CPF.
       // Accept uppercase and title-case names with accents.
-      const nameMatch = before.match(/([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,7})\s*[,:;\-–]?\s*$/);
-      const nameCandidate = (nameMatch?.[1] || "").trim();
+      // Try to recover the name near this CPF.
+// 1) Prefer the common pattern: "Nome Completo, dd/mm/aaaa," immediately before CPF.
+let nameCandidate = "";
+const nearSlice = tail.slice(Math.max(0, idx - 360), idx);
+const mNear = nearSlice.match(/([A-ZÀ-ÿ][A-Za-zÀ-ÿ'´`^~.\-]+(?:\s+(?:de|da|do|dos|das|e|d'|di|del|van|von)?\s*[A-Za-zÀ-ÿ'´`^~.\-]+){1,12})\s*,\s*\d{2}\/\d{2}\/\d{4}\s*,\s*$/i);
+if (mNear?.[1]) {
+  nameCandidate = mNear[1].trim();
+} else {
+  // 2) Fallback: find the last plausible name chunk before the CPF, ignoring trailing dates and punctuation.
+  const beforeClean = before
+    .replace(/\b\d{2}\/\d{2}\/\d{4}\b/g, " ")
+    .replace(/CPF[:\s]*$/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const m2 = beforeClean.match(/([A-ZÀ-ÿ][A-Za-zÀ-ÿ'´`^~.\-]+(?:\s+(?:de|da|do|dos|das|e|d'|di|del|van|von)?\s*[A-Za-zÀ-ÿ'´`^~.\-]+){1,12})\s*$/i);
+  if (m2?.[1]) nameCandidate = m2[1].trim();
+}
       if (!nameCandidate) continue;
       if (looksLikeCompanyName(nameCandidate)) continue;
       if (!isProbablyPersonName(nameCandidate)) continue;
