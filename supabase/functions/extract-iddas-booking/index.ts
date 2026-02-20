@@ -1,3 +1,52 @@
+// Filtro de nomes rótulo e heurística de nome válido
+function isLabelName(raw: string) {
+  const s = (raw || "").trim().toLowerCase();
+
+  const blocked = new Set([
+    "adultos", "adulto",
+    "crianças", "criancas",
+    "criança", "crianca",
+    "bebês", "bebes",
+    "bebê", "bebe",
+    "passageiros", "passageiro",
+    "passageiros identificados", "passageiros identificadas",
+    "identificados", "identificadas",
+    "titular",
+    "reservado por",
+    "voo", "voos",
+    "hospedagem", "hotel",
+  ]);
+
+  if (blocked.has(s)) return true;
+
+  // também bloqueia casos tipo "Adultos (2)" ou "Passageiros: 2 Adultos"
+  if (/^(adultos?|passageiros?)\b/.test(s)) return true;
+
+  return false;
+}
+
+function isProbablyPersonName(name: string) {
+  const n = (name || "").trim();
+  if (!n) return false;
+  if (isLabelName(n)) return false;
+
+  // precisa ter letras
+  if (!/[A-Za-zÀ-ÿ]/.test(n)) return false;
+
+  // regra principal: 2+ palavras
+  const parts = n.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return true;
+
+  // fallback: 1 palavra só aceita se for "forte" e não genérica
+  if (parts.length === 1) {
+    const w = parts[0];
+    if (w.length < 6) return false;
+    if (["adultos", "adulto", "passageiro", "passageiros"].includes(w.toLowerCase())) return false;
+    return true;
+  }
+
+  return false;
+}
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
@@ -303,6 +352,7 @@ function extractPassengers(pageText: string): Passenger[] {
       const birth = (mA[2] || "").trim();
       const cpfDigits = normalizeCPF(mA[3] || "");
       if (!name || looksLikeCompanyName(name)) continue;
+      if (!isProbablyPersonName(name)) continue;
       if (cpfDigits.length !== 11) continue;
       if (map.has(cpfDigits)) continue;
       map.set(cpfDigits, {
@@ -325,6 +375,7 @@ function extractPassengers(pageText: string): Passenger[] {
       const cpfDigits = normalizeCPF(mB[2] || "");
       const birth = (mB[3] || "").trim();
       if (!name || looksLikeCompanyName(name)) continue;
+      if (!isProbablyPersonName(name)) continue;
       if (cpfDigits.length !== 11) continue;
       if (map.has(cpfDigits)) continue;
       map.set(cpfDigits, {
@@ -433,6 +484,7 @@ function extractPassengers(pageText: string): Passenger[] {
     // ignora empresa e “reservador”
     if (!nameCandidate) continue;
     if (looksLikeCompanyName(nameCandidate)) continue;
+    if (!isProbablyPersonName(nameCandidate)) continue;
 
     // data nascimento
     const birthMatch =
@@ -485,6 +537,7 @@ function extractPassengers(pageText: string): Passenger[] {
       const nameCandidate = (nameMatch?.[1] || "").trim();
       if (!nameCandidate) continue;
       if (looksLikeCompanyName(nameCandidate)) continue;
+      if (!isProbablyPersonName(nameCandidate)) continue;
 
       const birthMatch = after.match(/Nasc[:\s]*([0-9]{2}\/\d{2}\/\d{4})/i) || after.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
       const birthDate = birthMatch ? toISODateFromBR(birthMatch[1]) : "";
