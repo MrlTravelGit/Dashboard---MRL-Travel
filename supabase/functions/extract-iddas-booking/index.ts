@@ -11,10 +11,79 @@ const corsHeaders = {
 function normalizeText(s: string) {
   return s
     .replace(/\u00a0/g, " ")
+    // Normalize zero-width and other invisible separators that can break regexes
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/[ \t]+/g, " ")
     .replace(/\r/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+// Build a text representation that preserves block boundaries.
+// doc.body.textContent often collapses everything into a single line, making
+// passenger extraction unreliable.
+function extractTextWithNewlines(doc: any): string {
+  try {
+    const body = doc?.body;
+    if (!body) return "";
+
+    const isBlockTag = (tag: string) => {
+      const t = (tag || "").toLowerCase();
+      return [
+        "p",
+        "div",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "main",
+        "br",
+        "li",
+        "ul",
+        "ol",
+        "table",
+        "thead",
+        "tbody",
+        "tfoot",
+        "tr",
+        "td",
+        "th",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+      ].includes(t);
+    };
+
+    let out = "";
+
+    const walk = (node: any) => {
+      if (!node) return;
+      const nodeType = node.nodeType;
+
+      // 3 = TEXT_NODE
+      if (nodeType === 3) {
+        out += String(node.nodeValue || "");
+        return;
+      }
+
+      // 1 = ELEMENT_NODE
+      if (nodeType === 1) {
+        const tag = (node.tagName || "").toString();
+        if (isBlockTag(tag)) out += "\n";
+        const children = node.childNodes || [];
+        for (let i = 0; i < children.length; i++) walk(children[i]);
+        if (isBlockTag(tag)) out += "\n";
+      }
+    };
+
+    walk(body);
+    return out;
+  } catch {
+    return "";
+  }
 }
 
 function parseMoneyBRL(text: string): number | null {
@@ -177,20 +246,27 @@ function extractPassengers(pageText: string): Passenger[] {
 
   const text = pageText
     .replace(/\u00a0/g, " ")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/\r/g, "")
     .trim();
 
   // tenta achar o começo do bloco de passageiros
+  // Try to find a passenger section first. If not found, we still proceed with
+  // a global CPF-based fallback (some layouts don't include the heading in textContent).
   const secMatch =
+    text.match(/Passageiros\s+Identificados/i) ||
     text.match(/Passageiros[\s:]*\d+\s*Adultos?/i) ||
-    text.match(/\bPassageiros\b/i);
+    text.match(/\bPassageiros\b/i) ||
+    text.match(/\bViajantes\b/i) ||
+    text.match(/\bPassageiro\(s\)\b/i);
 
-  if (!secMatch) return [];
-
-  const startIdx = secMatch.index ?? 0;
+  const startIdx = secMatch?.index ?? 0;
   const tail = text.slice(startIdx);
 
-  const lines = tail.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = tail
+    .split("\n")
+    .map((l) => l.replace(/^[-•\u2022]+\s*/, "").trim())
+    .filter(Boolean);
 
   // coletar linhas até começar outro bloco
   const passengerLines: string[] = [];
@@ -278,7 +354,9 @@ function extractPassengers(pageText: string): Passenger[] {
     if (looksLikeCompanyName(nameCandidate)) continue;
 
     // data nascimento
-    const birthMatch = line.match(/Nasc[:\s]*([0-9]{2}\/\d{2}\/\d{4})/i) || line.match(/(\d{2}\/\d{2}\/\d{4})/);
+    const birthMatch =
+      line.match(/Nasc[:\s]*([0-9]{2}\/\d{2}\/\d{4})/i) ||
+      line.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
     const birthDate = birthMatch ? toISODateFromBR(birthMatch[1]) : "";
 
     // telefone
@@ -302,6 +380,48 @@ function extractPassengers(pageText: string): Passenger[] {
       passport: passport || "",
       passportExpiry: "",
     });
+  }
+
+  // Global fallback: scan for CPF occurrences anywhere and try to infer name nearby.
+  // This helps when text comes in a single line or headings were removed.
+  if (map.size === 0) {
+    const cpfRe = /(\d{3}\.?(?:\d{3})\.?(?:\d{3})[-\s]?\d{2})/g;
+    let m: RegExpExecArray | null;
+    while ((m = cpfRe.exec(text)) !== null) {
+      const cpfDigits = normalizeCPF(m[1]);
+      if (cpfDigits.length !== 11) continue;
+      if (map.has(cpfDigits)) continue;
+
+      const idx = m.index;
+      const before = text.slice(Math.max(0, idx - 140), idx);
+      const after = text.slice(idx, Math.min(text.length, idx + 220));
+
+      // Try to locate the last plausible name chunk before the CPF.
+      // Accept uppercase / title case names with accents.
+      const nameMatch = before.match(/([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,6})\s*[,\-–]?\s*$/);
+      const nameCandidate = (nameMatch?.[1] || "").trim();
+      if (!nameCandidate) continue;
+      if (looksLikeCompanyName(nameCandidate)) continue;
+
+      const birthMatch = after.match(/Nasc[:\s]*([0-9]{2}\/\d{2}\/\d{4})/i) || after.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
+      const birthDate = birthMatch ? toISODateFromBR(birthMatch[1]) : "";
+
+      const phoneMatch = after.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
+      const phone = phoneMatch ? phoneMatch[0].trim() : "";
+
+      const emailMatch = after.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+      const email = emailMatch ? emailMatch[0].trim() : "";
+
+      map.set(cpfDigits, {
+        fullName: nameCandidate,
+        birthDate: birthDate || "",
+        cpf: cpfDigits,
+        phone: phone || "",
+        email: email || "",
+        passport: "",
+        passportExpiry: "",
+      });
+    }
   }
 
   return Array.from(map.values());
@@ -415,7 +535,7 @@ serve(async (req: Request) => {
 
     const html = await r.text();
     const doc = new DOMParser().parseFromString(html, "text/html");
-    const rawText = doc?.body?.textContent || "";
+    const rawText = extractTextWithNewlines(doc) || doc?.body?.textContent || "";
     const pageText = normalizeText(rawText);
 
     const total = parseMoneyBRL(pageText);
