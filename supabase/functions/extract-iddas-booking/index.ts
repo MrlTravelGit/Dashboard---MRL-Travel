@@ -288,6 +288,61 @@ function looksLikeCompanyName(name: string): boolean {
   return false;
 }
 
+function cleanSpacesLoose(s: string) {
+  return (s || "").replace(/\s+/g, " ").trim();
+}
+
+// Remove tags like "(BR4BET)" at the end of a passenger name
+function sanitizePassengerName(name: string) {
+  let n = cleanSpacesLoose(name);
+  n = n.replace(/\s*\(([A-Z0-9]{2,12})\)\s*$/i, "").trim();
+  return n;
+}
+
+function getExpectedPassengerCount(text: string): number | null {
+  const m =
+    text.match(/Passageiros\s*:\s*(\d+)/i) ||
+    text.match(/Passageiros[\s:]*\s*(\d+)\s*Adultos?/i) ||
+    text.match(/Passageiros\s*:\s*(\d+)\s*Adultos?/i);
+  if (!m) return null;
+  const v = Number(m[1]);
+  return Number.isFinite(v) ? v : null;
+}
+
+// Name pattern that accepts connectors like "de", "da", "dos"
+const NAME_CONNECTORS = "(?:de|da|do|dos|das|e|d'|del|della|van|von|la|le)";
+const NAME_WORD = "[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÀ-ÿ'’.-]{1,}";
+const NAME_PART = `(?:${NAME_WORD}|${NAME_CONNECTORS})`;
+const NAME_CAPTURE = `(${NAME_WORD}(?:\\s+${NAME_PART}){1,10})`;
+
+function bestNameFromContext(before: string) {
+  const s = cleanSpacesLoose(before)
+    .replace(/\bCPF\b[:\s]*/gi, " ")
+    .replace(/\bRG\b[:\s]*/gi, " ")
+    .replace(/\bNasc\b[:\s]*/gi, " ")
+    .replace(/\b\d{2}\/\d{2}\/\d{4}\b/g, " ")
+    .replace(/[\s,;:]+/g, " ")
+    .trim();
+
+  const parts = s.split(" ").filter(Boolean);
+
+  // Try long candidates first
+  for (let take = 10; take >= 2; take--) {
+    const cand = parts.slice(-take).join(" ");
+    const c = sanitizePassengerName(cand);
+    if (c && !looksLikeCompanyName(c) && isProbablyPersonName(c)) return c;
+  }
+
+  return "";
+}
+
+function birthNear(text: string) {
+  const m1 = text.match(/\bNasc\b[:\s]*([0-3]\d\/[0-1]\d\/\d{4})/i);
+  if (m1) return m1[1];
+  const m2 = text.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
+  return m2 ? m2[1] : "";
+}
+
 function extractPassengers(pageText: string): Passenger[] {
   // Suporta 2 formatos:
   // 1) "NOME, dd/mm/aaaa, CPF xxx..."
@@ -341,56 +396,106 @@ function extractPassengers(pageText: string): Passenger[] {
   const expectedCount = expectedMatch ? Number(expectedMatch[1]) : null;
 
   // 0) High-recall pass: some IDDAS layouts collapse the whole reservation into
-  // a single visual line. In those cases, relying on "\n" boundaries fails.
-  // We first attempt global patterns over the passenger section.
-  {
-    // Format A: "NOME, dd/mm/aaaa, CPF 000.000.000-00, (xx) 99999-9999, email"
-    const reA = /([A-ZÀ-ÿ][A-Za-zÀ-ÿ'´`^~.\-]+(?:\s+(?:de|da|do|dos|das|e|d'|di|del|van|von)?\s*[A-Za-zÀ-ÿ'´`^~.\-]+){1,12})\s*,\s*(\d{2}\/\d{2}\/\d{4})\s*,\s*CPF\s*([0-9.\- ]{11,14})(?:\s*,\s*((?:\(\d{2}\)\s*)?\d{4,5}-\d{4}|\b\d{10,11}\b))?(?:\s*,\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}))?/gim;
-    let mA: RegExpExecArray | null;
-    while ((mA = reA.exec(tail)) !== null) {
-      const name = (mA[1] || "").trim();
-      const birth = (mA[2] || "").trim();
-      const cpfDigits = normalizeCPF(mA[3] || "");
-      if (!name || looksLikeCompanyName(name)) continue;
-      if (!isProbablyPersonName(name)) continue;
-      if (cpfDigits.length !== 11) continue;
-      if (map.has(cpfDigits)) continue;
-      map.set(cpfDigits, {
-        fullName: name,
-        birthDate: toISODateFromBR(birth) || "",
-        cpf: cpfDigits,
-        phone: (mA[4] || "").trim(),
-        email: (mA[5] || "").trim(),
-        passport: "",
-        passportExpiry: "",
-      });
+// a single visual line. In those cases, relying on "\n" boundaries fails.
+// We first attempt global patterns over the passenger section.
+{
+  const upsert = (p: Passenger) => {
+    const cpfDigits = normalizeCPF(p.cpf);
+    if (cpfDigits.length !== 11) return;
+
+    const incomingName = sanitizePassengerName(p.fullName || "");
+    if (!incomingName || looksLikeCompanyName(incomingName) || isLabelName(incomingName)) return;
+
+    const normalized: Passenger = {
+      ...p,
+      fullName: incomingName,
+      cpf: cpfDigits,
+      birthDate: p.birthDate || "",
+      phone: p.phone || "",
+      email: p.email || "",
+      passport: p.passport || "",
+      passportExpiry: p.passportExpiry || "",
+    };
+
+    const existing = map.get(cpfDigits);
+    if (!existing) {
+      map.set(cpfDigits, normalized);
+      return;
     }
 
-    // Format B: "NOME ... CPF: 000.000.000-00" and optionally "Nasc: dd/mm/aaaa"
-    // Some pages include birth date, others don't. We capture both.
-    const reB = /([A-ZÀ-ÿ][A-Za-zÀ-ÿ'´`^~.\-]+(?:\s+(?:de|da|do|dos|das|e|d'|di|del|van|von)?\s*[A-Za-zÀ-ÿ'´`^~.\-]+){0,12})\s*(?:,|\s)+.*?\bCPF\b[:\s]*([0-9.\- ]{11,14})(?:.{0,220}?\bNasc\b[:\s]*([0-9]{2}\/\d{2}\/\d{4}))?/gim;
-    let mB: RegExpExecArray | null;
-    while ((mB = reB.exec(tail)) !== null) {
-      const name = (mB[1] || "").trim();
-      const cpfDigits = normalizeCPF(mB[2] || "");
-      const birth = (mB[3] || "").trim();
-      if (!name || looksLikeCompanyName(name)) continue;
-      if (!isProbablyPersonName(name)) continue;
-      if (cpfDigits.length !== 11) continue;
-      if (map.has(cpfDigits)) continue;
-      map.set(cpfDigits, {
-        fullName: name,
-        birthDate: birth ? (toISODateFromBR(birth) || "") : "",
-        cpf: cpfDigits,
-        phone: "",
-        email: "",
-        passport: "",
-        passportExpiry: "",
-      });
+    // Merge: prefer the more complete record
+    const existingWords = cleanSpacesLoose(existing.fullName).split(/\s+/).filter(Boolean).length;
+    const incomingWords = cleanSpacesLoose(normalized.fullName).split(/\s+/).filter(Boolean).length;
+
+    if (incomingWords > existingWords && isProbablyPersonName(normalized.fullName)) {
+      existing.fullName = normalized.fullName;
     }
+
+    if (!existing.birthDate && normalized.birthDate) existing.birthDate = normalized.birthDate;
+    if (!existing.phone && normalized.phone) existing.phone = normalized.phone;
+    if (!existing.email && normalized.email) existing.email = normalized.email;
+    if (!existing.passport && normalized.passport) existing.passport = normalized.passport;
+    if (!existing.passportExpiry && normalized.passportExpiry) existing.passportExpiry = normalized.passportExpiry;
+
+    map.set(cpfDigits, existing);
+  };
+
+  // Primary format: "NOME COMPLETO, dd/mm/aaaa, CPF 000.000.000-00, ... "
+  const rePrimary = new RegExp(
+    `${NAME_CAPTURE}\s*,\s*(\d{2}\/\d{2}\/\d{4})\s*,\s*CPF\s*([0-9.\- ]{11,14})`,
+    "gi",
+  );
+
+  let m1: RegExpExecArray | null;
+  while ((m1 = rePrimary.exec(tail)) !== null) {
+    const name = (m1[1] || "").trim();
+    const birth = (m1[2] || "").trim();
+    const cpfDigits = normalizeCPF(m1[3] || "");
+    const window = tail.slice(m1.index, Math.min(tail.length, m1.index + 320));
+
+    const phoneMatch = window.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
+    const emailMatch = window.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+
+    upsert({
+      fullName: name,
+      birthDate: toISODateFromBR(birth) || "",
+      cpf: cpfDigits,
+      phone: phoneMatch ? phoneMatch[0].trim() : "",
+      email: emailMatch ? emailMatch[0].trim() : "",
+      passport: "",
+      passportExpiry: "",
+    });
   }
 
-  const lines = tail
+  // Secondary format: "NOME ... CPF: ... Nasc: dd/mm/aaaa"
+  const reSecondary = new RegExp(
+    `${NAME_CAPTURE}[\s\S]{0,180}?\bCPF\b[:\s]*([0-9.\- ]{11,14})(?:[\s\S]{0,260}?\bNasc\b[:\s]*(\d{2}\/\d{2}\/\d{4}))?`,
+    "gi",
+  );
+
+  let m2: RegExpExecArray | null;
+  while ((m2 = reSecondary.exec(tail)) !== null) {
+    const name = (m2[1] || "").trim();
+    const cpfDigits = normalizeCPF(m2[2] || "");
+    const birth = (m2[3] || "").trim();
+    const window = tail.slice(m2.index, Math.min(tail.length, m2.index + 340));
+
+    const phoneMatch = window.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
+    const emailMatch = window.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+
+    upsert({
+      fullName: name,
+      birthDate: birth ? (toISODateFromBR(birth) || "") : "",
+      cpf: cpfDigits,
+      phone: phoneMatch ? phoneMatch[0].trim() : "",
+      email: emailMatch ? emailMatch[0].trim() : "",
+      passport: "",
+      passportExpiry: "",
+    });
+  }
+}
+
+const lines = tail
     .split("\n")
     .map((l) => l.replace(/^[-•\u2022]+\s*/, "").trim())
     .filter(Boolean);
@@ -466,7 +571,18 @@ function extractPassengers(pageText: string): Passenger[] {
 
     const cpfDigits = normalizeCPF(cpfMatch[1] ?? cpfMatch[0]);
     if (cpfDigits.length !== 11) continue;
-    if (map.has(cpfDigits)) continue; // dedupe por CPF
+    const existing = map.get(cpfDigits);
+    if (existing) {
+      // Merge details when we see the same CPF again (common in inconsistent layouts)
+      if (!existing.fullName || existing.fullName.length < nameCandidate.length) {
+        existing.fullName = nameCandidate;
+      }
+      if (!existing.birthDate && birthDate) existing.birthDate = birthDate;
+      if (!existing.phone && phone) existing.phone = phone;
+      if (!existing.email && email) existing.email = email;
+      map.set(cpfDigits, existing);
+      continue;
+    }
 
     // extrai nome: pode estar na própria linha antes da vírgula, ou na linha anterior (pendingName)
     let nameCandidate = "";
@@ -525,37 +641,24 @@ function extractPassengers(pageText: string): Passenger[] {
     while ((m = cpfRe.exec(tail)) !== null) {
       const cpfDigits = normalizeCPF(m[1]);
       if (cpfDigits.length !== 11) continue;
-      if (map.has(cpfDigits)) continue;
+      const existing = map.get(cpfDigits);
+      if (existing) {
+        if (!existing.fullName || existing.fullName.length < nameCandidate.length) {
+          existing.fullName = nameCandidate;
+        }
+        if (!existing.birthDate && birthDate) existing.birthDate = birthDate;
+        map.set(cpfDigits, existing);
+        continue;
+      }
 
       const idx = m.index;
-      const before = tail.slice(Math.max(0, idx - 180), idx);
-      const after = tail.slice(idx, Math.min(tail.length, idx + 260));
-
-      // Find the last plausible name chunk before the CPF.
-      // Accept uppercase and title-case names with accents.
-      // Try to recover the name near this CPF.
-// 1) Prefer the common pattern: "Nome Completo, dd/mm/aaaa," immediately before CPF.
-let nameCandidate = "";
-const nearSlice = tail.slice(Math.max(0, idx - 360), idx);
-const mNear = nearSlice.match(/([A-ZÀ-ÿ][A-Za-zÀ-ÿ'´`^~.\-]+(?:\s+(?:de|da|do|dos|das|e|d'|di|del|van|von)?\s*[A-Za-zÀ-ÿ'´`^~.\-]+){1,12})\s*,\s*\d{2}\/\d{2}\/\d{4}\s*,\s*$/i);
-if (mNear?.[1]) {
-  nameCandidate = mNear[1].trim();
-} else {
-  // 2) Fallback: find the last plausible name chunk before the CPF, ignoring trailing dates and punctuation.
-  const beforeClean = before
-    .replace(/\b\d{2}\/\d{2}\/\d{4}\b/g, " ")
-    .replace(/CPF[:\s]*$/i, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const m2 = beforeClean.match(/([A-ZÀ-ÿ][A-Za-zÀ-ÿ'´`^~.\-]+(?:\s+(?:de|da|do|dos|das|e|d'|di|del|van|von)?\s*[A-Za-zÀ-ÿ'´`^~.\-]+){1,12})\s*$/i);
-  if (m2?.[1]) nameCandidate = m2[1].trim();
-}
+      const before = tail.slice(Math.max(0, idx - 900), idx);
+      const after = tail.slice(idx, Math.min(tail.length, idx + 260));      const nameCandidate = bestNameFromContext(before);
       if (!nameCandidate) continue;
       if (looksLikeCompanyName(nameCandidate)) continue;
       if (!isProbablyPersonName(nameCandidate)) continue;
 
-      const birthMatch = after.match(/Nasc[:\s]*([0-9]{2}\/\d{2}\/\d{4})/i) || after.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
-      const birthDate = birthMatch ? toISODateFromBR(birthMatch[1]) : "";
+      const birthDate = toISODateFromBR(birthNear(after)) || "";
 
       const phoneMatch = after.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
       const phone = phoneMatch ? phoneMatch[0].trim() : "";
@@ -596,20 +699,20 @@ if (mNear?.[1]) {
     const cpfFlex = cpfToFlexiblePattern(cpfDigits);
     if (!cpfFlex) return { name: "", birth: "" };
 
-    const patterns: RegExp[] = [
+        const patterns: RegExp[] = [
       // "NOME COMPLETO, dd/mm/aaaa, CPF xxx"
       new RegExp(
-        `([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,7})\\s*,\\s*(\\d{2}\\/\\d{2}\\/\\d{4})\\s*,\\s*CPF\\s*${cpfFlex}`,
+        `${NAME_CAPTURE}\s*,\s*(\d{2}\/\d{2}\/\d{4})\s*,\s*CPF\s*${cpfFlex}`,
         "i",
       ),
       // "NOME COMPLETO ... CPF: xxx ... Nasc: dd/mm/aaaa"
       new RegExp(
-        `([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,7}).{0,140}?\\bCPF\\b[:\\s]*${cpfFlex}(?:.{0,220}?\\bNasc\\b[:\\s]*(\\d{2}\\/\\d{2}\\/\\d{4}))?`,
+        `${NAME_CAPTURE}[\s\S]{0,180}?\bCPF\b[:\s]*${cpfFlex}(?:[\s\S]{0,260}?\bNasc\b[:\s]*(\d{2}\/\d{2}\/\d{4}))?`,
         "i",
       ),
       // "CPF: xxx" e procurar nome completo imediatamente antes
       new RegExp(
-        `([A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+(?:\\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇa-zà-ÿ'.]+){1,7})\\s*[,;:]?\\s*CPF\\s*[:\\s]*${cpfFlex}`,
+        `${NAME_CAPTURE}\s*[,;:]?\s*CPF\s*[:\s]*${cpfFlex}`,
         "i",
       ),
     ];
@@ -749,30 +852,84 @@ serve(async (req: Request) => {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
-    }
+    }const fetchHtmlOnce = async (attempt: number) => {
+  const headers = new Headers();
+  headers.set(
+    "user-agent",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari",
+  );
+  headers.set("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+  headers.set("accept-language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7");
+  headers.set("cache-control", "no-cache");
+  headers.set("pragma", "no-cache");
+  if (attempt >= 2) headers.set("referer", url);
 
-    const r = await fetch(url, {
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari",
-      },
+  const controller = new AbortController();
+  const timeoutMs = attempt === 1 ? 12000 : 18000;
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      method: "GET",
+      headers,
+      redirect: "follow",
+      signal: controller.signal,
     });
+  } finally {
+    clearTimeout(t);
+  }
+};
 
-    if (!r.ok) {
+let pageText = "";
+let doc: Document | null = null;
+let passengers: Passenger[] = [];
+let lastStatus = 0;
+
+for (let attempt = 1; attempt <= 2; attempt++) {
+  const r = await fetchHtmlOnce(attempt);
+  lastStatus = r.status;
+
+  if (!r.ok) {
+    if (attempt === 2) {
       return new Response(JSON.stringify({ success: false, error: `Falha ao buscar URL (${r.status})` }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    continue;
+  }
 
-    const html = await r.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const rawText = extractTextWithNewlines(doc) || doc?.body?.textContent || "";
-    const pageText = normalizeText(rawText);
+  const html = await r.text();
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const rawText = extractTextWithNewlines(parsed) || parsed?.body?.textContent || "";
+  const normalized = normalizeText(rawText);
 
-    const total = parseMoneyBRL(pageText);
-    const reservedBy = extractReservedBy(pageText);
-    const passengers = extractPassengers(pageText);
+  const extractedPassengers = extractPassengers(normalized);
+  const expectedCount = getExpectedPassengerCount(normalized);
+
+  // Retry when the HTML is likely incomplete (happens with aggressive caching)
+  const shouldRetry =
+    !parsed ||
+    normalized.length < 3000 ||
+    extractedPassengers.length === 0 ||
+    (expectedCount !== null && extractedPassengers.length < expectedCount);
+
+  pageText = normalized;
+  doc = parsed;
+  passengers = extractedPassengers;
+
+  if (!shouldRetry) break;
+}
+
+if (!pageText || !doc) {
+  return new Response(JSON.stringify({ success: false, error: `Falha ao processar HTML (${lastStatus})` }), {
+    status: 200,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+const total = parseMoneyBRL(pageText);
+const reservedBy = extractReservedBy(pageText);
     
     // mainPassengerName is ALWAYS the first passenger real, otherwise empty
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
