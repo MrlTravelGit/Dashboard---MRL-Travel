@@ -337,10 +337,40 @@ function bestNameFromContext(before: string) {
 }
 
 function birthNear(text: string) {
-  const m1 = text.match(/\bNasc\b[:\s]*([0-3]\d\/[0-1]\d\/\d{4})/i);
-  if (m1) return m1[1];
-  const m2 = text.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
-  return m2 ? m2[1] : "";
+  // Only trust labeled birth dates here. Unlabeled dates near CPF often pick
+  // travel/check-in dates and cause wrong outputs.
+  const m1 = text.match(/\b(Nasc|Nascimento)\b[:\s]*([0-3]\d\/[0-1]\d\/\d{4})/i);
+  if (m1) return m1[2];
+  return "";
+}
+
+function extractBirthFromPassengerLine(line: string): string {
+  const labeled = line.match(/\b(Nasc|Nascimento)\b[:\s]*([0-3]\d\/[0-1]\d\/\d{4})/i);
+  if (labeled) return labeled[2];
+  const inline = line.match(/,\s*([0-3]\d\/[0-1]\d\/\d{4})\s*,\s*CPF\b/i);
+  if (inline) return inline[1];
+  return "";
+}
+
+function getLineAroundIndex(text: string, idx: number): string {
+  const start = Math.max(0, text.lastIndexOf("\n", idx) + 1);
+  let end = text.indexOf("\n", idx);
+  if (end < 0) end = text.length;
+  return text.slice(start, end).trim();
+}
+
+function htmlToText(html: string): string {
+  const withoutScripts = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ");
+
+  const withNewlines = withoutScripts
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(div|p|li|tr|table|section|article|header|footer|main|h\d)\s*>/gi, "\n")
+    .replace(/<(div|p|li|tr|table|section|article|header|footer|main|h\d)\b[^>]*>/gi, "\n");
+
+  const stripped = withNewlines.replace(/<[^>]+>/g, " ");
+  return normalizeText(stripped);
 }
 
 function extractPassengers(pageText: string): Passenger[] {
@@ -590,17 +620,6 @@ const lines = tail
 
     pendingName = ""; // consumiu
 
-    // ignora empresa e “reservador”
-    if (!nameCandidate) continue;
-    if (looksLikeCompanyName(nameCandidate)) continue;
-    if (!isProbablyPersonName(nameCandidate)) continue;
-
-    // data nascimento
-    const birthMatch =
-      line.match(/Nasc[:\s]*([0-9]{2}\/\d{2}\/\d{4})/i) ||
-      line.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
-    const birthDate = birthMatch ? toISODateFromBR(birthMatch[1]) : "";
-
     // telefone
     const phoneMatch = line.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
     const phone = phoneMatch ? phoneMatch[0].trim() : "";
@@ -608,6 +627,37 @@ const lines = tail
     // email
     const emailMatch = line.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
     const email = emailMatch ? emailMatch[0].trim() : "";
+
+    // data nascimento (somente quando for claramente nascimento)
+    const birthRaw = extractBirthFromPassengerLine(line);
+    const birthDate = birthRaw ? (toISODateFromBR(birthRaw) || "") : "";
+
+    // Se não conseguimos um nome válido, ainda assim mantenha o CPF no mapa
+    // quando a página indica que há mais passageiros do que capturamos.
+    const safeName = sanitizePassengerName(nameCandidate || "");
+    if (!safeName || looksLikeCompanyName(safeName) || !isProbablyPersonName(safeName)) {
+      if (expectedCount !== null) {
+        const existing = map.get(cpfDigits);
+        if (existing) {
+          if (!existing.phone && phone) existing.phone = phone;
+          if (!existing.email && email) existing.email = email;
+          map.set(cpfDigits, existing);
+        } else {
+          map.set(cpfDigits, {
+            fullName: "",
+            birthDate: "",
+            cpf: cpfDigits,
+            phone: phone || "",
+            email: email || "",
+            passport: "",
+            passportExpiry: "",
+          });
+        }
+      }
+      continue;
+    }
+
+    nameCandidate = safeName;
 
     // passaporte
     const passportMatch = line.match(/Passaporte[:\s]*([A-Z0-9-]+)/i);
@@ -648,7 +698,8 @@ const lines = tail
   const fallbackText = (expectedCount !== null && map.size < expectedCount) ? tailFull : tail;
 
   if (map.size === 0 || (expectedCount !== null && map.size < expectedCount)) {
-    const cpfRe = /(\d{3}\.?(?:\d{3})\.?(?:\d{3})[-\s]?\d{2})/g;
+    // More tolerant CPF matcher: accepts any separators between digit groups.
+    const cpfRe = /(\d{3}\D*\d{3}\D*\d{3}\D*\d{2})/g;
     let m: RegExpExecArray | null;
     while ((m = cpfRe.exec(fallbackText)) !== null) {
       const cpfDigits = normalizeCPF(m[1]);
@@ -656,18 +707,50 @@ const lines = tail
       const idx = m.index;
       const before = fallbackText.slice(Math.max(0, idx - 1100), idx);
       const after = fallbackText.slice(idx, Math.min(fallbackText.length, idx + 420));
-      const nameCandidate = bestNameFromContext(before);
-      if (!nameCandidate) continue;
-      if (looksLikeCompanyName(nameCandidate)) continue;
-      if (!isProbablyPersonName(nameCandidate)) continue;
+      const localLine = getLineAroundIndex(fallbackText, idx);
 
-      const birthDate = toISODateFromBR(birthNear(after)) || "";
+      // Try to read the exact "NOME, dd/mm/aaaa, CPF" pattern from the line.
+      // This avoids picking "Adultos" or "Passageiros" as part of the name.
+      const reLocal = new RegExp(
+        `${NAME_CAPTURE}\\s*,\\s*(\\d{2}\\/\\d{2}\\/\\d{4})\\s*,\\s*CPF\\b`,
+        "iu",
+      );
+      const ml = localLine.match(reLocal);
+
+      const rawName = ml ? (ml[1] || "") : bestNameFromContext(before);
+      const rawBirth = ml ? (ml[2] || "") : birthNear(after);
+      const birthDate = rawBirth ? (toISODateFromBR(rawBirth) || "") : "";
 
       const phoneMatch = after.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
       const phone = phoneMatch ? phoneMatch[0].trim() : "";
 
       const emailMatch = after.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
       const email = emailMatch ? emailMatch[0].trim() : "";
+
+      const nameCandidate = sanitizePassengerName(rawName);
+
+      // Even if name is not found, keep CPF as placeholder when we expect more passengers.
+      if (!nameCandidate || looksLikeCompanyName(nameCandidate) || !isProbablyPersonName(nameCandidate)) {
+        if (expectedCount !== null) {
+          const existing = map.get(cpfDigits);
+          if (existing) {
+            if (!existing.phone && phone) existing.phone = phone;
+            if (!existing.email && email) existing.email = email;
+            map.set(cpfDigits, existing);
+          } else {
+            map.set(cpfDigits, {
+              fullName: "",
+              birthDate: "",
+              cpf: cpfDigits,
+              phone: phone || "",
+              email: email || "",
+              passport: "",
+              passportExpiry: "",
+            });
+          }
+        }
+        continue;
+      }
 
       const existing = map.get(cpfDigits);
       if (existing) {
@@ -761,17 +844,20 @@ const lines = tail
     const currentName = (p.fullName || "").trim();
     const words = currentName.split(/\s+/).filter(Boolean);
 
-    // Se veio só 1 palavra, tenta melhorar.
-    if (words.length < 2) {
-      const improved = findBestNameAndBirthByCpf(cpf);
-      if (improved.name) p.fullName = improved.name;
-      if (!p.birthDate && improved.birth) p.birthDate = toISODateFromBR(improved.birth) || "";
+    const improved = findBestNameAndBirthByCpf(cpf);
+
+    // Se o nome atual está incompleto (poucas palavras), tente promover para um nome mais completo.
+    if (improved.name) {
+      const improvedWords = improved.name.split(/\s+/).filter(Boolean).length;
+      const currentWords = words.length;
+      if (currentWords < 2 || improvedWords > currentWords) {
+        p.fullName = improved.name;
+      }
     }
 
-    // Se já tem nome completo mas faltou nascimento, tenta buscar pelo CPF.
-    if (p.fullName && !p.birthDate) {
-      const improved = findBestNameAndBirthByCpf(cpf);
-      if (improved.birth) p.birthDate = toISODateFromBR(improved.birth) || "";
+    // Data de nascimento: só preenche se a extração encontrou um valor claro.
+    if (!p.birthDate && improved.birth) {
+      p.birthDate = toISODateFromBR(improved.birth) || "";
     }
   }
 
@@ -922,8 +1008,28 @@ for (let attempt = 1; attempt <= 2; attempt++) {
   const rawText = extractTextWithNewlines(parsed) || parsed?.body?.textContent || "";
   const normalized = normalizeText(rawText);
 
-  const extractedPassengers = extractPassengers(normalized);
-  const expectedCount = getExpectedPassengerCount(normalized);
+  // Alternate text extraction directly from raw HTML. Some layouts hide or collapse
+  // parts of the passenger block when relying only on textContent.
+  const normalizedFromHtml = htmlToText(html);
+
+  const passengersA = extractPassengers(normalized);
+  const passengersB = normalizedFromHtml ? extractPassengers(normalizedFromHtml) : [];
+
+  const expectedCount = getExpectedPassengerCount(normalized) ?? getExpectedPassengerCount(normalizedFromHtml);
+
+  const score = (ps: Passenger[]) => {
+    const full = ps.filter((p) => (p.fullName || "").trim().split(/\s+/).filter(Boolean).length >= 2).length;
+    const birth = ps.filter((p) => !!p.birthDate).length;
+    return ps.length * 1000 + full * 10 + birth * 5;
+  };
+
+  let extractedPassengers = passengersA;
+  if (score(passengersB) > score(extractedPassengers)) extractedPassengers = passengersB;
+  if (expectedCount !== null) {
+    // Prefer the result that meets expected passenger count
+    if (passengersA.length >= expectedCount && passengersB.length < expectedCount) extractedPassengers = passengersA;
+    if (passengersB.length >= expectedCount && passengersA.length < expectedCount) extractedPassengers = passengersB;
+  }
 
   // Retry when the HTML is likely incomplete (happens with aggressive caching)
   const shouldRetry =
