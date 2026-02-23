@@ -29,6 +29,10 @@ export default function CompaniesPage() {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [editingCompany, setEditingCompany] = useState<CompanyWithLogo | null>(null);
+
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ password: '', confirm: '' });
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   
   const [formData, setFormData] = useState({
     name: '',
@@ -37,6 +41,63 @@ export default function CompaniesPage() {
     password: '',
     paymentDeadlineDays: '30',
   });
+
+  const resetPasswordModal = () => {
+    setPasswordForm({ password: '', confirm: '' });
+    setPasswordOpen(false);
+    setIsChangingPassword(false);
+  };
+
+  const handleChangeCompanyPassword = async () => {
+    if (!editingCompany) return;
+
+    const password = passwordForm.password.trim();
+    const confirm = passwordForm.confirm.trim();
+
+    if (password.length < 6) {
+      toast({
+        title: 'Senha inválida',
+        description: 'A senha deve ter no mínimo 6 caracteres.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (password !== confirm) {
+      toast({
+        title: 'Senhas não conferem',
+        description: 'Digite a mesma senha nos dois campos.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('company-set-password', {
+        body: { company_id: editingCompany.id, new_password: password },
+      });
+
+      if (error) throw error;
+      if (!data?.success) {
+        throw new Error(data?.error || 'Não foi possível alterar a senha.');
+      }
+
+      toast({
+        title: 'Senha alterada',
+        description: 'A senha de acesso da empresa foi atualizada.',
+      });
+      resetPasswordModal();
+    } catch (e: any) {
+      console.error('Error changing company password:', e);
+      toast({
+        title: 'Erro ao alterar senha',
+        description: e?.message || 'Não foi possível alterar a senha da empresa.',
+        variant: 'destructive',
+      });
+      setIsChangingPassword(false);
+    }
+  };
 
   const fetchCompanies = async () => {
     setIsLoading(true);
@@ -435,6 +496,24 @@ export default function CompaniesPage() {
                   />
                 </div>
 
+                {editingCompany && (
+                  <div className="space-y-2">
+                    <Label>Senha de Acesso</Label>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setPasswordOpen(true)}
+                      >
+                        Alterar senha
+                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Altera a senha de login da empresa
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {!editingCompany && (
                   <div className="space-y-2">
                     <Label htmlFor="password">Senha de Acesso *</Label>
@@ -477,6 +556,58 @@ export default function CompaniesPage() {
                   )}
                 </Button>
               </form>
+
+              <Dialog open={passwordOpen} onOpenChange={(o) => {
+                setPasswordOpen(o);
+                if (!o) resetPasswordModal();
+              }}>
+                <DialogContent className="max-w-sm">
+                  <DialogHeader>
+                    <DialogTitle>Alterar senha da empresa</DialogTitle>
+                  </DialogHeader>
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="new-password">Nova senha</Label>
+                      <Input
+                        id="new-password"
+                        type="password"
+                        value={passwordForm.password}
+                        onChange={(e) => setPasswordForm({ ...passwordForm, password: e.target.value })}
+                        placeholder="Mínimo 6 caracteres"
+                        minLength={6}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="confirm-password">Confirmar nova senha</Label>
+                      <Input
+                        id="confirm-password"
+                        type="password"
+                        value={passwordForm.confirm}
+                        onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
+                        placeholder="Repita a nova senha"
+                        minLength={6}
+                      />
+                    </div>
+
+                    <Button
+                      type="button"
+                      className="w-full"
+                      disabled={isChangingPassword}
+                      onClick={handleChangeCompanyPassword}
+                    >
+                      {isChangingPassword ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Salvando...
+                        </>
+                      ) : (
+                        'Salvar senha'
+                      )}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </DialogContent>
           </Dialog>
         </div>

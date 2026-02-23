@@ -49,6 +49,8 @@ export default function BookingsPage() {
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractedData, setExtractedData] = useState<any>(null);
+  const [needsHeadlessRetry, setNeedsHeadlessRetry] = useState(false);
+  const [isHeadlessExtracting, setIsHeadlessExtracting] = useState(false);
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [autoRegisterEmployees, setAutoRegisterEmployees] = useState(true);
   
@@ -197,6 +199,7 @@ export default function BookingsPage() {
 
     setIsExtracting(true);
     setExtractedData(null);
+    setNeedsHeadlessRetry(false);
 
     try {
       // Em alguns ambientes (principalmente produção), o invoke pode não enviar o JWT automaticamente.
@@ -362,9 +365,20 @@ export default function BookingsPage() {
             : Array.isArray(payload.cars)
             ? payload.cars
             : [],
+          _meta: payload?.meta || result?.meta || result?.data?.meta || null,
         } as any;
 
         setExtractedData(normalized);
+
+        const expected = Number((normalized?._meta as any)?.expectedPassengers ?? (normalized?._meta as any)?.expected_passengers ?? NaN);
+        const needsHeadless = Boolean((normalized?._meta as any)?.needsHeadless || (normalized?._meta as any)?.needs_headless);
+        if (needsHeadless || (Number.isFinite(expected) && expected > 0 && (normalized.passengers?.length || 0) < expected)) {
+          setNeedsHeadlessRetry(true);
+          toast({
+            title: 'Extração parcial',
+            description: 'Alguns dados podem não ter sido carregados. Tente a extração completa.',
+          });
+        }
         setFormData(prev => ({
           ...prev,
           title: normalized.suggestedTitle || prev.title,
@@ -433,6 +447,60 @@ export default function BookingsPage() {
       });
     } finally {
       setIsExtracting(false);
+    }
+  };
+
+  const handleHeadlessRetry = async () => {
+    const url = formData.url?.trim();
+    if (!url) return;
+
+    setIsHeadlessExtracting(true);
+    try {
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+      const authHeader = sessionData.session?.access_token
+        ? { Authorization: `Bearer ${sessionData.session.access_token}` }
+        : undefined;
+
+      const { data, error } = await supabase.functions.invoke('extract-iddas-booking-headless', {
+        body: { url },
+        headers: authHeader,
+      });
+
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Falha na extração completa');
+
+      const payload: any = data?.data?.data ?? data?.data ?? data;
+      const passengersRaw: any[] = Array.isArray(payload.passengers) ? payload.passengers : [];
+
+      // Reuse same normalization logic by calling handleExtractFromLink pipeline would be heavy.
+      // We only update extractedData with the new payload.
+      setExtractedData((prev: any) => ({
+        ...(prev || {}),
+        suggestedTitle: payload.suggestedTitle || payload.suggested_title || prev?.suggestedTitle || '',
+        mainPassengerName: payload.mainPassengerName || payload.main_passenger_name || prev?.mainPassengerName || '',
+        total: payload.total ?? prev?.total ?? null,
+        flights: Array.isArray(payload.flights) ? payload.flights : prev?.flights || [],
+        hotels: Array.isArray(payload.hotels) ? payload.hotels : prev?.hotels || [],
+        carRentals: Array.isArray(payload.cars) ? payload.cars : prev?.carRentals || [],
+        passengers: passengersRaw,
+        _meta: payload?.meta || data?.meta || null,
+      }));
+
+      setNeedsHeadlessRetry(false);
+      toast({
+        title: 'Extração completa finalizada',
+        description: 'Os dados foram atualizados com a extração completa.',
+      });
+    } catch (e: any) {
+      console.error('Headless extract error:', e);
+      toast({
+        title: 'Falha na extração completa',
+        description: e?.message || 'Não foi possível extrair em modo completo.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsHeadlessExtracting(false);
     }
   };
 
@@ -754,6 +822,29 @@ export default function BookingsPage() {
                       <p className="text-xs text-muted-foreground">
                         Cole o link e clique em Extrair. O sistema identificará automaticamente voos, hotéis e carros.
                       </p>
+
+                      {needsHeadlessRetry && /agencia\.iddas\.com\.br\/reserva\//i.test(formData.url || '') && (
+                        <div className="mt-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleHeadlessRetry}
+                            disabled={isHeadlessExtracting || isExtracting}
+                          >
+                            {isHeadlessExtracting ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Extração completa...
+                              </>
+                            ) : (
+                              'Extrair novamente (modo completo)'
+                            )}
+                          </Button>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Use quando o IDDAS não retornar todos os dados na primeira tentativa.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Extracted Data Preview */}
