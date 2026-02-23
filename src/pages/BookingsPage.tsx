@@ -51,6 +51,9 @@ export default function BookingsPage() {
   const [extractedData, setExtractedData] = useState<any>(null);
   const [needsHeadlessRetry, setNeedsHeadlessRetry] = useState(false);
   const [isHeadlessExtracting, setIsHeadlessExtracting] = useState(false);
+  // Edição manual de nomes quando o IDDAS não retorna o nome no HTML.
+  // Chave preferida: CPF, fallback: índice.
+  const [passengerNameEdits, setPassengerNameEdits] = useState<Record<string, string>>({});
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [autoRegisterEmployees, setAutoRegisterEmployees] = useState(true);
   
@@ -62,6 +65,11 @@ export default function BookingsPage() {
     totalPaid: '',
     totalOriginal: '',
   });
+
+  // Sempre que novos dados forem extraídos, limpa edições antigas.
+  useEffect(() => {
+    setPassengerNameEdits({});
+  }, [open, extractedData?.sourceUrl, extractedData?.source_url]);
 
   const fetchBookings = async () => {
     setIsLoadingBookings(true);
@@ -550,8 +558,8 @@ export default function BookingsPage() {
     try {
       const { data: userData } = await supabase.auth.getUser();
       // Passengers: garantir array de objetos com nome, cpf, etc
-      const passengersToSave = (extractedData.passengers || []).map((p: any) => ({
-        name: p.name || p.fullName || '',
+      const passengersToSave = (extractedData.passengers || []).map((p: any, idx: number) => ({
+        name: (passengerNameEdits[(p.cpf || '').toString()] ?? passengerNameEdits[`idx:${idx}`] ?? p.name || p.fullName || '').trim(),
         cpf: p.cpf,
         birthDate: p.birthDate,
         phone: p.phone,
@@ -949,7 +957,36 @@ export default function BookingsPage() {
                               <div className="space-y-1">
                                 {extractedData.passengers.map((p: any, i: number) => (
                                   <div key={i} className="text-xs bg-background/50 p-2 rounded border">
-                                    <div className="font-medium text-foreground">{(p.fullName || p.name || '').trim() ? (p.fullName || p.name) : 'Nome não identificado'}</div>
+                                    {(() => {
+                                      const cpfKey = (p.cpf || '').toString();
+                                      const idxKey = `idx:${i}`;
+                                      const currentName = (passengerNameEdits[cpfKey] ?? passengerNameEdits[idxKey] ?? (p.fullName || p.name || '')).trim();
+                                      const showInput = !currentName;
+
+                                      return (
+                                        <div className="space-y-2">
+                                          {showInput ? (
+                                            <div className="space-y-1">
+                                              <div className="font-medium text-foreground">Nome não identificado</div>
+                                              <Input
+                                                value={passengerNameEdits[cpfKey] ?? passengerNameEdits[idxKey] ?? ''}
+                                                onChange={(e) => {
+                                                  const v = e.target.value;
+                                                  setPassengerNameEdits((prev) => ({
+                                                    ...prev,
+                                                    [cpfKey || idxKey]: v,
+                                                  }));
+                                                }}
+                                                placeholder="Digite o nome completo"
+                                                className="h-8 text-xs"
+                                              />
+                                            </div>
+                                          ) : (
+                                            <div className="font-medium text-foreground">{currentName}</div>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
                                     <div className="text-muted-foreground flex flex-wrap gap-2 mt-1">
                                       {p.cpf && <span>CPF: {p.cpf}</span>}
                                       {p.birthDate && <span>Nasc: {new Date(p.birthDate).toLocaleDateString('pt-BR')}</span>}

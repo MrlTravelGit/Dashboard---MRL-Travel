@@ -248,35 +248,29 @@ export default function CompaniesPage() {
           description: `A empresa "${formData.name}" foi atualizada com sucesso.`,
         });
       } else {
-        // First create the user account for the company
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: formData.email,
-          password: formData.password,
-          options: {
-            data: {
-              full_name: formData.name,
+        // Criar empresa + usuário de acesso sem trocar a sessão do admin.
+        // O signUp no client troca a sessão para o usuário recém-criado e quebra o painel.
+        const { data: fnData, error: fnError } = await supabase.functions.invoke(
+          'company-create-with-user',
+          {
+            body: {
+              name: formData.name,
+              cnpj: formData.cnpj,
+              email: formData.email,
+              payment_deadline_days: parseInt(formData.paymentDeadlineDays) || 30,
+              // senha opcional. Se vazio, a função faz invite (definir senha via e-mail).
+              password: formData.password || null,
             },
-          },
-        });
+          }
+        );
 
-        if (authError) {
-          throw authError;
+        if (fnError) {
+          throw fnError;
         }
 
-        // Then create the company record
-        const { data: companyData, error: companyError } = await supabase
-          .from('companies')
-          .insert({
-            name: formData.name,
-            cnpj: formData.cnpj,
-            email: formData.email,
-            payment_deadline_days: parseInt(formData.paymentDeadlineDays) || 30,
-          })
-          .select()
-          .single();
-
-        if (companyError) {
-          throw companyError;
+        const companyData = (fnData as any)?.company;
+        if (!companyData?.id) {
+          throw new Error('Não foi possível criar a empresa.');
         }
 
         // Upload logo if provided
@@ -290,13 +284,7 @@ export default function CompaniesPage() {
           }
         }
 
-        // Link the user to the company if user was created
-        if (authData.user && companyData) {
-          await supabase.from('company_users').insert({
-            company_id: companyData.id,
-            user_id: authData.user.id,
-          });
-        }
+        // Vínculo company_users é feito na Edge Function.
 
         toast({
           title: 'Empresa cadastrada!',
@@ -516,7 +504,7 @@ export default function CompaniesPage() {
 
                 {!editingCompany && (
                   <div className="space-y-2">
-                    <Label htmlFor="password">Senha de Acesso *</Label>
+                    <Label htmlFor="password">Senha de Acesso</Label>
                     <Input
                       id="password"
                       type="password"
@@ -524,8 +512,10 @@ export default function CompaniesPage() {
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                       placeholder="Senha para login"
                       minLength={6}
-                      required
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Se deixar em branco, o sistema envia um convite por e-mail para a empresa definir a senha.
+                    </p>
                   </div>
                 )}
 
