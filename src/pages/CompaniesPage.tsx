@@ -258,8 +258,14 @@ export default function CompaniesPage() {
           throw new Error('Sessão inválida. Saia e entre novamente.');
         }
 
-        const authHeader = `Bearer ${accessToken}`.replace(/\s+/g, ' ').trim();
+        // Edge Functions esperam um JWT válido (sem quebras de linha/whitespace invisível) + apikey.
+        // Em alguns ambientes, o token pode carregar whitespace invisível. Sanitizamos aqui.
+        const authHeader = (`Bearer ${accessToken}`)
+          .replace(/[\r\n\t]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
         const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/company-create-with-user`;
+        const apiKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || (import.meta.env as any).VITE_SUPABASE_ANON_KEY || '').toString();
 
         const payload = {
           name: formData.name,
@@ -274,6 +280,8 @@ export default function CompaniesPage() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            // Mantém compatibilidade com o gateway do Supabase (mesmo comportamento do supabase-js).
+            ...(apiKey ? { apikey: apiKey } : {}),
             Authorization: authHeader,
           },
           body: JSON.stringify(payload),
