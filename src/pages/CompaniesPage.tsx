@@ -264,7 +264,6 @@ export default function CompaniesPage() {
           .replace(/[\r\n\t]+/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
-        const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/company-create-with-user`;
         const apiKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || (import.meta.env as any).VITE_SUPABASE_ANON_KEY || '').toString();
 
         const payload = {
@@ -276,20 +275,18 @@ export default function CompaniesPage() {
           password: formData.password?.trim() ? formData.password.trim() : null,
         };
 
-        const fnRes = await fetch(fnUrl, {
-          method: 'POST',
+        // Prefer supabase-js invoke to avoid any header mangling in some browsers/proxies.
+        // We still provide an explicit Authorization header to guarantee the session token is used.
+        const { data: fnData, error: fnErr } = await supabase.functions.invoke('company-create-with-user', {
+          body: payload,
           headers: {
-            'Content-Type': 'application/json',
-            // Mantém compatibilidade com o gateway do Supabase (mesmo comportamento do supabase-js).
-            ...(apiKey ? { apikey: apiKey } : {}),
             Authorization: authHeader,
-          },
-          body: JSON.stringify(payload),
+            ...(apiKey ? { apikey: apiKey } : {}),
+          } as any,
         });
 
-        const fnData = await fnRes.json().catch(() => ({}));
-        if (!fnRes.ok) {
-          const msg = (fnData as any)?.error || (fnData as any)?.message || 'Falha ao cadastrar empresa.';
+        if (fnErr) {
+          const msg = (fnErr as any)?.message || 'Falha ao cadastrar empresa.';
           throw new Error(msg);
         }
 
