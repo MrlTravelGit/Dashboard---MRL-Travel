@@ -250,17 +250,16 @@ export default function CompaniesPage() {
       } else {
         // Criar empresa + usuário de acesso sem trocar a sessão do admin.
         // O signUp no client troca a sessão para o usuário recém-criado e quebra o painel.
-        const { data: sessionData } = await supabase.auth.getSession();
+        const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+        if (sessionErr) throw sessionErr;
+
         const accessToken = sessionData?.session?.access_token;
-
-        if (!accessToken) {
-          throw new Error('Sessão inválida. Faça login novamente.');
+        if (!accessToken || typeof accessToken !== 'string') {
+          throw new Error('Sessão inválida. Saia e entre novamente.');
         }
 
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-        if (!supabaseUrl) {
-          throw new Error('VITE_SUPABASE_URL não configurado.');
-        }
+        const authHeader = `Bearer ${accessToken}`.replace(/\s+/g, ' ').trim();
+        const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/company-create-with-user`;
 
         const payload = {
           name: formData.name,
@@ -268,27 +267,25 @@ export default function CompaniesPage() {
           email: formData.email,
           payment_deadline_days: parseInt(formData.paymentDeadlineDays) || 30,
           // senha opcional. Se vazio, a função faz invite (definir senha via e-mail).
-          password: formData.password || null,
+          password: formData.password?.trim() ? formData.password.trim() : null,
         };
 
-        const fnRes = await fetch(`${supabaseUrl}/functions/v1/company-create-with-user`, {
+        const fnRes = await fetch(fnUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: authHeader,
           },
           body: JSON.stringify(payload),
         });
 
-        const fnJson = await fnRes.json().catch(() => ({} as any));
+        const fnData = await fnRes.json().catch(() => ({}));
         if (!fnRes.ok) {
-          const msg =
-            (fnJson && (fnJson.error || fnJson.message)) ||
-            `Falha ao cadastrar empresa (status ${fnRes.status}).`;
+          const msg = (fnData as any)?.error || (fnData as any)?.message || 'Falha ao cadastrar empresa.';
           throw new Error(msg);
         }
 
-        const companyData = (fnJson as any)?.company;
+        const companyData = (fnData as any)?.company;
         if (!companyData?.id) {
           throw new Error('Não foi possível criar a empresa.');
         }
