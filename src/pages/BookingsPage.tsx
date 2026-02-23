@@ -558,14 +558,24 @@ export default function BookingsPage() {
     try {
       const { data: userData } = await supabase.auth.getUser();
       // Passengers: garantir array de objetos com nome, cpf, etc
-      const passengersToSave = (extractedData.passengers || []).map((p: any, idx: number) => ({
-        name: (passengerNameEdits[(p.cpf || '').toString()] ?? passengerNameEdits[`idx:${idx}`] ?? p.name || p.fullName || '').trim(),
-        cpf: p.cpf,
-        birthDate: p.birthDate,
-        phone: p.phone,
-        email: p.email,
-        passport: p.passport,
-      }));
+      const passengersToSave = (extractedData.passengers || []).map((p: any, idx: number) => {
+        const keyCpf = (p.cpf || "").toString();
+
+        const rawName =
+          passengerNameEdits[keyCpf] ??
+          passengerNameEdits[`idx:${idx}`] ??
+          (p.name && p.name.trim() ? p.name : p.fullName) ??
+          "";
+
+        return {
+          name: rawName.trim(),
+          cpf: p.cpf,
+          birthDate: p.birthDate,
+          phone: p.phone,
+          email: p.email,
+          passport: p.passport,
+        };
+      });
 
       // Cria reserva com todos os dados extraídos (inclusive hotels, flights, car_rentals, passengers)
       const { data: insertedBooking, error } = await supabase
