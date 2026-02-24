@@ -17,5 +17,7 @@ export default defineConfig(({ mode }) => ({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    // Evita que o bundle gere duas cópias de React (isso costuma causar erros como useContext em null)
+    dedupe: ["react", "react-dom"],
   },
 }));
