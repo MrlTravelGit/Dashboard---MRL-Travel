@@ -48,18 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Guard para evitar reentrância de loadRoleAndCompany
   const loadingRoleRef = useRef<string | null>(null);
 
-  const clearSupabaseStorage = () => {
-    try {
-      const keys: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith('sb-')) keys.push(k);
-      }
-      keys.forEach((k) => localStorage.removeItem(k));
-    } catch (e) {
-      if (isDev) console.warn('[AUTH] clearSupabaseStorage error:', e);
-    }
-  };
+
 
   const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
     let timeoutId: number | undefined;

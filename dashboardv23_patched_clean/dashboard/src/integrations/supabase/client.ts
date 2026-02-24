@@ -22,8 +22,10 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
-    storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storageKey: "sb-dashboard-mrl",
+    storage: localStorage,
   }
 });

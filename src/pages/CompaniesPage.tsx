@@ -255,13 +255,19 @@ export default function CompaniesPage() {
 
         const accessToken = sessionData?.session?.access_token;
         if (!accessToken || typeof accessToken !== 'string') {
-          throw new Error('Sessão inválida. Saia e entre novamente.');
+          toast({
+            title: 'Sessão expirada',
+            description: 'Sessão expirada, faça login novamente.',
+            variant: 'destructive',
+          });
+          setIsSubmitting(false);
+          return;
         }
 
         // Edge Functions esperam um JWT válido (sem quebras de linha/whitespace invisível) + apikey.
         // Em alguns ambientes, o token pode carregar whitespace invisível. Sanitizamos aqui.
         const authHeader = (`Bearer ${accessToken}`)
-          .replace(/[\r\n\t]+/g, ' ')
+          .replace(/\r\n\t+/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
         const apiKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || (import.meta.env as any).VITE_SUPABASE_ANON_KEY || '').toString();
@@ -277,13 +283,29 @@ export default function CompaniesPage() {
 
         // Prefer supabase-js invoke to avoid any header mangling in some browsers/proxies.
         // We still provide an explicit Authorization header to guarantee the session token is used.
-        const { data: fnData, error: fnErr } = await supabase.functions.invoke('company-create-with-user', {
-          body: payload,
-          headers: {
-            Authorization: authHeader,
-            ...(apiKey ? { apikey: apiKey } : {}),
-          } as any,
-        });
+        let fnData, fnErr;
+        try {
+          const result = await supabase.functions.invoke('company-create-with-user', {
+            body: payload,
+            headers: {
+              Authorization: authHeader,
+              ...(apiKey ? { apikey: apiKey } : {}),
+            } as any,
+          });
+          fnData = result.data;
+          fnErr = result.error;
+          if (fnErr) {
+            // Log detalhado
+            console.error('Edge Function 401/erro:', {
+              status: fnErr.status,
+              body: fnErr,
+            });
+          }
+        } catch (err) {
+          // Log detalhado
+          console.error('Edge Function invoke exception:', err);
+          throw err;
+        }
 
         if (fnErr) {
           const msg = (fnErr as any)?.message || 'Falha ao cadastrar empresa.';
