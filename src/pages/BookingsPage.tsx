@@ -970,8 +970,17 @@ export default function BookingsPage() {
                                     {(() => {
                                       const cpfKey = (p.cpf || '').toString();
                                       const idxKey = `idx:${i}`;
-                                      const currentName = (passengerNameEdits[cpfKey] ?? passengerNameEdits[idxKey] ?? (p.fullName || p.name || '')).trim();
-                                      const showInput = !currentName;
+
+                                      // Nome vindo do extrator (quando existe) deve ser exibido como "travado".
+                                      // Quando o extrator NÃO encontra o nome, mantemos o input sempre visível,
+                                      // inclusive após o usuário começar a digitar.
+                                      const extractedName = (p.fullName || p.name || '').toString().trim();
+
+                                      const editKey = cpfKey || idxKey;
+                                      const manualName = (passengerNameEdits[editKey] ?? '').toString();
+
+                                      const showInput = !extractedName;
+                                      const currentName = (manualName || extractedName).trim();
 
                                       return (
                                         <div className="space-y-2">
@@ -979,12 +988,12 @@ export default function BookingsPage() {
                                             <div className="space-y-1">
                                               <div className="font-medium text-foreground">Nome não identificado</div>
                                               <Input
-                                                value={passengerNameEdits[cpfKey] ?? passengerNameEdits[idxKey] ?? ''}
+                                                value={manualName}
                                                 onChange={(e) => {
                                                   const v = e.target.value;
                                                   setPassengerNameEdits((prev) => ({
                                                     ...prev,
-                                                    [cpfKey || idxKey]: v,
+                                                    [editKey]: v,
                                                   }));
                                                 }}
                                                 placeholder="Digite o nome completo"

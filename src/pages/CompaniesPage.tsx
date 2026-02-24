@@ -1,3 +1,9 @@
+  // Painel de debug de sessão (apenas admin)
+  const { user, session } = useAuth();
+  const debugSession = session;
+  const debugUserId = user?.id || null;
+  const debugAccessToken = session?.access_token || null;
+
 import { useState, useEffect, useRef } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -416,6 +422,15 @@ export default function CompaniesPage() {
 
   return (
     <DashboardLayout>
+      {/* Painel de debug de sessão para admin */}
+      {isAdmin && (
+        <div style={{ background: '#f6f6f6', border: '1px solid #ddd', borderRadius: 6, padding: 12, marginBottom: 16, fontSize: 13 }}>
+          <strong>Debug Sessão (apenas admin):</strong>
+          <div>Session: <span style={{ color: debugSession ? 'green' : 'red' }}>{debugSession ? 'OK' : 'NULA'}</span></div>
+          <div>User ID: <span style={{ color: debugUserId ? 'green' : 'red' }}>{debugUserId || 'N/A'}</span></div>
+          <div>Access Token: <span style={{ color: debugAccessToken ? 'green' : 'red' }}>{debugAccessToken ? `${debugAccessToken.slice(0, 10)}... (${debugAccessToken.length} chars)` : 'N/A'}</span></div>
+        </div>
+      )}
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>

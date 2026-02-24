@@ -78,8 +78,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let loadedCompanyId: string | null = null;
       try {
         // Fonte principal: tabela admin_users (user_id)
-        const adminRes = await withTimeout(
-          supabase
+        const adminRes: any = await withTimeout(
+          (supabase as any)
             .from('admin_users')
             .select('user_id')
             .eq('user_id', userId)
@@ -92,8 +92,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // Compatibilidade: se não for admin via admin_users, tenta user_roles (quando existir)
         if (!isAdminValue) {
-          const rolesRes = await withTimeout(
-            supabase
+          const rolesRes: any = await withTimeout(
+            (supabase as any)
               .from('user_roles')
               .select('role')
               .eq('user_id', userId)
@@ -131,14 +131,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         // Carrega company_id (secundário)
         try {
-          const companyRes = await withTimeout(
-            supabase
+          const companyRes: any = await withTimeout(
+            (supabase as any)
               .from('company_users')
               .select('company_id')
               .eq('user_id', userId)
               .order('created_at', { ascending: false })
               .limit(1)
-              .maybeSingle(),
+              .maybeSingle()
+              .then((res: any) => res),
             8000,
             'loadAdminStatus(company_users)'
           );
