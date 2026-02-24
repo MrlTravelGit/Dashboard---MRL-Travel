@@ -577,21 +577,42 @@ export default function BookingsPage() {
       const { data: userData } = await supabase.auth.getUser();
       // Passengers: garantir array de objetos com nome, cpf, etc
       const passengersToSave = (extractedData.passengers || []).map((p: any, idx: number) => {
-        const editKey = computeEditKey(p, idx);
-        const extractedName = (p.fullName || p.name || '').trim();
+        // Lógica robusta para edição de nome de passageiro
+        const cpfDigits = (p.cpf || '').replace(/\D/g, '');
+        const editKey = cpfDigits.length === 11 ? `cpf:${cpfDigits}` : `idx:${idx}`;
+        const extractedName = (p.name ?? '').trim();
         const editedName = passengerNameEdits[editKey] ?? '';
-        // Input só aparece se nome extraído está vazio
         const showInput = extractedName.length === 0;
-        // O nome exibido é o extraído, senão o editado
         const displayName = extractedName || editedName;
-        return {
-          name: displayName,
-          cpf: p.cpf,
-          birthDate: p.birthDate,
-          phone: p.phone,
-          email: p.email,
-          passport: p.passport,
-        };
+        return (
+          <div key={editKey} className="text-xs bg-background/50 p-2 rounded border">
+            <div className="space-y-2">
+              {showInput ? (
+                <div className="space-y-1">
+                  <div className="font-medium text-foreground">Nome não identificado</div>
+                  <Input
+                    value={editedName}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPassengerNameEdits(prev => ({ ...prev, [editKey]: v }));
+                    }}
+                    placeholder="Digite o nome completo"
+                    className="h-8 text-xs"
+                  />
+                </div>
+              ) : (
+                <div className="font-medium text-foreground">{displayName}</div>
+              )}
+            </div>
+            <div className="text-muted-foreground flex flex-wrap gap-2 mt-1">
+              {p.cpf && <span>CPF: {p.cpf}</span>}
+              {p.birthDate && <span>Nasc: {new Date(p.birthDate).toLocaleDateString('pt-BR')}</span>}
+              {p.phone && <span>Tel: {p.phone}</span>}
+              {p.email && <span>{p.email}</span>}
+              {p.passport && <span>Passaporte: {p.passport}</span>}
+            </div>
+          </div>
+        );
       });
 
       // Validação: impedir salvar passageiro com nome vazio
