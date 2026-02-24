@@ -66,10 +66,29 @@ export default function BookingsPage() {
     totalOriginal: '',
   });
 
-  // Sempre que novos dados forem extraídos, limpa edições antigas.
+  // Helper para normalizar CPF
+  function normalizeCpfDigits(cpf?: string) {
+    return (cpf || '').replace(/\D/g, '');
+  }
+
+  // Helper para chave estável
+  function computeEditKey(p: any, idx: number) {
+    const cpfDigits = normalizeCpfDigits(p?.cpf);
+    return cpfDigits.length === 11 ? `cpf:${cpfDigits}` : `idx:${idx}`;
+  }
+
+  // Sempre que novos dados forem extraídos, inicializa apenas chaves novas.
   useEffect(() => {
-    setPassengerNameEdits({});
-  }, [open, extractedData?.sourceUrl, extractedData?.source_url]);
+    if (!extractedData?.passengers) return;
+    setPassengerNameEdits(prev => {
+      const next = { ...prev };
+      extractedData.passengers.forEach((p: any, idx: number) => {
+        const key = computeEditKey(p, idx);
+        if (!(key in next)) next[key] = '';
+      });
+      return next;
+    });
+  }, [open, extractedData?.passengers]);
 
   const fetchBookings = async () => {
     setIsLoadingBookings(true);
@@ -554,21 +573,19 @@ export default function BookingsPage() {
       return;
     }
 
-    
     try {
       const { data: userData } = await supabase.auth.getUser();
       // Passengers: garantir array de objetos com nome, cpf, etc
       const passengersToSave = (extractedData.passengers || []).map((p: any, idx: number) => {
-        const keyCpf = (p.cpf || "").toString();
-
-        const rawName =
-          passengerNameEdits[keyCpf] ??
-          passengerNameEdits[`idx:${idx}`] ??
-          (p.name && p.name.trim() ? p.name : p.fullName) ??
-          "";
-
+        const editKey = computeEditKey(p, idx);
+        const extractedName = (p.fullName || p.name || '').trim();
+        const editedName = passengerNameEdits[editKey] ?? '';
+        // Input só aparece se nome extraído está vazio
+        const showInput = extractedName.length === 0;
+        // O nome exibido é o extraído, senão o editado
+        const displayName = extractedName || editedName;
         return {
-          name: rawName.trim(),
+          name: displayName,
           cpf: p.cpf,
           birthDate: p.birthDate,
           phone: p.phone,
@@ -576,6 +593,16 @@ export default function BookingsPage() {
           passport: p.passport,
         };
       });
+
+      // Validação: impedir salvar passageiro com nome vazio
+      if (passengersToSave.some(p => !p.name || p.name.trim().length === 0)) {
+        toast({
+          title: 'Nome obrigatório',
+          description: 'Preencha o nome completo de todos os passageiros.',
+          variant: 'destructive',
+        });
+        return;
+      }
 
       // Cria reserva com todos os dados extraídos (inclusive hotels, flights, car_rentals, passengers)
       const { data: insertedBooking, error } = await supabase
@@ -967,36 +994,24 @@ export default function BookingsPage() {
                               <div className="space-y-1">
                                 {extractedData.passengers.map((p: any, i: number) => (
                                   <div key={i} className="text-xs bg-background/50 p-2 rounded border">
-                                    {(() => {
-                                      const cpfKey = (p.cpf || '').toString();
-                                      const idxKey = `idx:${i}`;
-                                      const currentName = (passengerNameEdits[cpfKey] ?? passengerNameEdits[idxKey] ?? (p.fullName || p.name || '')).trim();
-                                      const showInput = !currentName;
-
-                                      return (
-                                        <div className="space-y-2">
-                                          {showInput ? (
-                                            <div className="space-y-1">
-                                              <div className="font-medium text-foreground">Nome não identificado</div>
-                                              <Input
-                                                value={passengerNameEdits[cpfKey] ?? passengerNameEdits[idxKey] ?? ''}
-                                                onChange={(e) => {
-                                                  const v = e.target.value;
-                                                  setPassengerNameEdits((prev) => ({
-                                                    ...prev,
-                                                    [cpfKey || idxKey]: v,
-                                                  }));
-                                                }}
-                                                placeholder="Digite o nome completo"
-                                                className="h-8 text-xs"
-                                              />
-                                            </div>
-                                          ) : (
-                                            <div className="font-medium text-foreground">{currentName}</div>
-                                          )}
+                                    <div className="space-y-2">
+                                      {showInput ? (
+                                        <div className="space-y-1">
+                                          <div className="font-medium text-foreground">Nome não identificado</div>
+                                          <Input
+                                            value={editedName}
+                                            onChange={(e) => {
+                                              const v = e.target.value;
+                                              setPassengerNameEdits(prev => ({ ...prev, [editKey]: v }));
+                                            }}
+                                            placeholder="Digite o nome completo"
+                                            className="h-8 text-xs"
+                                          />
                                         </div>
-                                      );
-                                    })()}
+                                      ) : (
+                                        <div className="font-medium text-foreground">{displayName}</div>
+                                      )}
+                                    </div>
                                     <div className="text-muted-foreground flex flex-wrap gap-2 mt-1">
                                       {p.cpf && <span>CPF: {p.cpf}</span>}
                                       {p.birthDate && <span>Nasc: {new Date(p.birthDate).toLocaleDateString('pt-BR')}</span>}
@@ -1195,12 +1210,12 @@ export default function BookingsPage() {
                         )}
                         {booking.hotels && booking.hotels.length > 0 && (
                           <span className="inline-flex items-center gap-1 text-xs bg-secondary/10 text-secondary px-2 py-0.5 rounded-full">
-                            <Building2 className="h-3 w-3" /> {booking.hotels.length}
+                            <Building2 className="h-3 w-3" /> {booking.hotels.length} hotel(s)
                           </span>
                         )}
                         {booking.car_rentals && booking.car_rentals.length > 0 && (
                           <span className="inline-flex items-center gap-1 text-xs bg-chart-5/10 text-chart-5 px-2 py-0.5 rounded-full">
-                            <Car className="h-3 w-3" /> {booking.car_rentals.length}
+                            <Car className="h-3 w-3" /> {booking.car_rentals.length} carro(s)
                           </span>
                         )}
                       </div>
