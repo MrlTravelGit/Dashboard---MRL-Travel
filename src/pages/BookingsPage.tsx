@@ -990,35 +990,43 @@ export default function BookingsPage() {
                                 </label>
                               </div>
                               <div className="space-y-1">
-                                {extractedData.passengers.map((p: any, i: number) => (
-                                  <div key={i} className="text-xs bg-background/50 p-2 rounded border">
-                                    <div className="space-y-2">
-                                      {showInput ? (
-                                        <div className="space-y-1">
-                                          <div className="font-medium text-foreground">Nome não identificado</div>
-                                          <Input
-                                            value={editedName}
-                                            onChange={(e) => {
-                                              const v = e.target.value;
-                                              setPassengerNameEdits(prev => ({ ...prev, [editKey]: v }));
-                                            }}
-                                            placeholder="Digite o nome completo"
-                                            className="h-8 text-xs"
-                                          />
-                                        </div>
-                                      ) : (
-                                        <div className="font-medium text-foreground">{displayName}</div>
-                                      )}
+                                {extractedData.passengers.map((p: any, idx: number) => {
+                                  const extractedName = (p.name ?? "").trim();
+                                  const cpfDigits = (p.cpf ?? "").toString().replace(/\D/g, "");
+                                  const editKey = cpfDigits ? `cpf:${cpfDigits}` : `idx:${idx}`;
+                                  const editedName = passengerNameEdits[editKey] ?? "";
+                                  const showInput = extractedName.length === 0;
+                                  const displayName = extractedName || editedName.trim();
+                                  return (
+                                    <div key={editKey} className="text-xs bg-background/50 p-2 rounded border">
+                                      <div className="space-y-2">
+                                        {showInput ? (
+                                          <div className="space-y-1">
+                                            <div className="font-medium text-foreground">Nome não identificado</div>
+                                            <Input
+                                              value={passengerNameEdits[editKey] ?? ""}
+                                              onChange={(e) => {
+                                                const v = e.target.value;
+                                                setPassengerNameEdits(prev => ({ ...prev, [editKey]: v }));
+                                              }}
+                                              placeholder="Digite o nome completo"
+                                              className="h-8 text-xs"
+                                            />
+                                          </div>
+                                        ) : (
+                                          <div className="font-medium text-foreground">{displayName}</div>
+                                        )}
+                                      </div>
+                                      <div className="text-muted-foreground flex flex-wrap gap-2 mt-1">
+                                        {p.cpf && <span>CPF: {p.cpf}</span>}
+                                        {p.birthDate && <span>Nasc: {new Date(p.birthDate).toLocaleDateString('pt-BR')}</span>}
+                                        {p.phone && <span>Tel: {p.phone}</span>}
+                                        {p.email && <span>{p.email}</span>}
+                                        {p.passport && <span>Passaporte: {p.passport}</span>}
+                                      </div>
                                     </div>
-                                    <div className="text-muted-foreground flex flex-wrap gap-2 mt-1">
-                                      {p.cpf && <span>CPF: {p.cpf}</span>}
-                                      {p.birthDate && <span>Nasc: {new Date(p.birthDate).toLocaleDateString('pt-BR')}</span>}
-                                      {p.phone && <span>Tel: {p.phone}</span>}
-                                      {p.email && <span>{p.email}</span>}
-                                      {p.passport && <span>Passaporte: {p.passport}</span>}
-                                    </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </div>
                           )}
