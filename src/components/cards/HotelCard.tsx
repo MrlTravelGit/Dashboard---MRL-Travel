@@ -34,6 +34,52 @@ export function HotelCard({ hotel, showSavings = true, viewMode = 'card', onDele
     return Number.isFinite(n) ? n : fallback;
   }
 
+  function parseDateLoose(input?: string | null): Date | null {
+    const s = (input || '').trim();
+    if (!s) return null;
+
+    // DD/MM/YYYY
+    const mBR = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (mBR) {
+      const day = Number(mBR[1]);
+      const month = Number(mBR[2]);
+      const year = Number(mBR[3]);
+      if (!day || !month || !year) return null;
+      return new Date(year, month - 1, day);
+    }
+
+    // YYYY-MM-DD
+    const mISO = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (mISO) {
+      const year = Number(mISO[1]);
+      const month = Number(mISO[2]);
+      const day = Number(mISO[3]);
+      if (!day || !month || !year) return null;
+      return new Date(year, month - 1, day);
+    }
+
+    return null;
+  }
+
+  function computeNights(): number {
+    const checkInRaw = (hotel.check_in || hotel.checkIn) as string | undefined;
+    const checkOutRaw = (hotel.check_out || hotel.checkOut) as string | undefined;
+    const checkIn = parseDateLoose(checkInRaw);
+    const checkOut = parseDateLoose(checkOutRaw);
+    if (!checkIn || !checkOut) {
+      return safeNumber(hotel.nights, 0);
+    }
+
+    // Considerar horários padrão: check-in 14:00 e check-out 12:00
+    checkIn.setHours(14, 0, 0, 0);
+    checkOut.setHours(12, 0, 0, 0);
+    const diffMs = checkOut.getTime() - checkIn.getTime();
+    const days = Math.round(diffMs / (1000 * 60 * 60 * 24));
+    return Number.isFinite(days) && days > 0 ? days : safeNumber(hotel.nights, 0);
+  }
+
+  const nights = computeNights();
+
   // Landscape view
   if (viewMode === 'landscape') {
     return (
@@ -50,7 +96,7 @@ export function HotelCard({ hotel, showSavings = true, viewMode = 'card', onDele
         </div>
         <div className="flex items-center gap-1 text-sm text-muted-foreground">
           <Moon className="h-3 w-3" />
-          <span>{safeNumber(hotel.nights || 1)}</span>
+          <span>{safeNumber(nights, 0)}</span>
         </div>
         <div className="text-sm text-muted-foreground truncate max-w-[150px]">{hotel.guest_name || hotel.guestName || 'Não informado'}</div>
         {hotel.breakfast && (
@@ -105,11 +151,7 @@ export function HotelCard({ hotel, showSavings = true, viewMode = 'card', onDele
           <div className="flex items-center gap-4 mt-4 pt-4 border-t border-border">
             <div className="flex items-center gap-2">
               <Moon className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm">{safeNumber(hotel.nights, 1)} Diária{safeNumber(hotel.nights, 1) > 1 ? 's' : ''}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm">{safeNumber(hotel.rooms, 1)} Quarto{safeNumber(hotel.rooms, 1) > 1 ? 's' : ''}</span>
+              <span className="text-sm">{safeNumber(nights, 0)} Diária{safeNumber(nights, 0) > 1 ? 's' : ''}</span>
             </div>
             {hotel.breakfast && (
               <div className="flex items-center gap-2">
