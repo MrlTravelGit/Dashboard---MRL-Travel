@@ -865,6 +865,52 @@ const lines = tail
 }
 
 
+function extractPassengersFromDom(doc: any): Passenger[] {
+  try {
+    const ps: Passenger[] = [];
+    const nodes = doc?.querySelectorAll?.("p.fs-6") || [];
+    for (const p of nodes) {
+      const nameEl = p.querySelector?.("span.fw-semibold");
+      const rawName = (nameEl?.textContent || "").trim();
+      const fullText = (p.textContent || "").replace(/\u00a0/g, " ").replace(/[\u200B-\u200D\uFEFF]/g, " ").trim();
+
+      // Prefer the text that comes after the name span
+      let details = fullText;
+      if (rawName && fullText.toLowerCase().startsWith(rawName.toLowerCase())) {
+        details = fullText.slice(rawName.length).trim();
+      }
+
+      const cpfMatch = details.match(/CPF\s*([0-9.\-]{11,14})/i);
+      if (!cpfMatch) continue;
+      const cpfDigits = normalizeCPF(cpfMatch[1]);
+      if (cpfDigits.length !== 11) continue;
+
+      const birthMatch = details.match(/(\d{2}\/\d{2}\/\d{4})/);
+      const phoneMatch = details.match(/\(\d{2}\)\s*\d{4,5}-\d{4}/);
+      const emailMatch = details.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+
+      // Clean name: remove trailing role/company like "(BR4)" or "(Gestão)"
+      let name = rawName || "";
+      name = name.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+      name = sanitizePassengerName(name);
+
+      ps.push({
+        fullName: name,
+        cpf: cpfDigits,
+        birthDate: birthMatch ? birthMatch[1] : "",
+        phone: phoneMatch ? phoneMatch[0] : "",
+        email: emailMatch ? emailMatch[0] : "",
+        passport: "",
+        passportExpiry: "",
+      });
+    }
+    return ps;
+  } catch {
+    return [];
+  }
+}
+
+
 function matchAllHotels(pageText: string): ExtractedHotel[] {
   const hotels: ExtractedHotel[] = [];
   // Tenta encontrar blocos que contenham hotel/hospedagem
@@ -1029,6 +1075,31 @@ for (let attempt = 1; attempt <= 2; attempt++) {
     // Prefer the result that meets expected passenger count
     if (passengersA.length >= expectedCount && passengersB.length < expectedCount) extractedPassengers = passengersA;
     if (passengersB.length >= expectedCount && passengersA.length < expectedCount) extractedPassengers = passengersB;
+  }
+
+
+  // DOM-based extraction for IDDAS passenger banner (more reliable for names with suffix like "(BR4)")
+  const passengersDom = extractPassengersFromDom(parsed);
+  if (passengersDom.length) {
+    const merged = new Map<string, Passenger>();
+    const upsertMerged = (p: Passenger) => {
+      const cpfDigits = normalizeCPF(p.cpf);
+      if (cpfDigits.length !== 11) return;
+      const existing = merged.get(cpfDigits) || { ...p, cpf: cpfDigits };
+      const incomingName = sanitizePassengerName(p.fullName || "");
+      if (incomingName && (!existing.fullName || !isProbablyPersonName(existing.fullName))) {
+        existing.fullName = incomingName;
+      }
+      if (!existing.birthDate && p.birthDate) existing.birthDate = p.birthDate;
+      if (!existing.phone && p.phone) existing.phone = p.phone;
+      if (!existing.email && p.email) existing.email = p.email;
+      merged.set(cpfDigits, existing);
+    };
+
+    for (const p of extractedPassengers) upsertMerged(p);
+    for (const p of passengersDom) upsertMerged(p);
+
+    extractedPassengers = Array.from(merged.values());
   }
 
   // Retry when the HTML is likely incomplete (happens with aggressive caching)
