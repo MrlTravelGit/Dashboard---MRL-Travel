@@ -25,153 +25,152 @@ async function findUserIdByEmail(supabaseAdmin: any, email: string): Promise<str
     if (error) throw error;
     const found = data.users.find((u: any) => (u.email || "").toLowerCase() === target);
     if (found) return found.id;
-    if (!data.users.length || data.users.length < perPage) break;
-    page += 1;
-  }
-  return null;
-}
-
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  try {
-    const PROJECT_URL = Deno.env.get("PROJECT_URL");
-    const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY");
-
-    if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Missing PROJECT_URL or SERVICE_ROLE_KEY" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const authHeader = req.headers.get("Authorization") || "";
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Missing Authorization header" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const supabaseAdmin = createClient(PROJECT_URL, SERVICE_ROLE_KEY);
-
-    const token = authHeader.replace("Bearer ", "");
-    const { data: caller, error: callerErr } = await supabaseAdmin.auth.getUser(token);
-    if (callerErr || !caller?.user) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Invalid token" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const callerId = caller.user.id;
-
-    // Apenas admin pode criar empresa e usuário.
-    const { data: isAdminRow } = await supabaseAdmin
-      .from("admin_users")
-      .select("user_id")
-      .eq("user_id", callerId)
-      .maybeSingle();
-
-    if (!isAdminRow) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Not allowed" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const body = (await req.json()) as Body;
-    const name = (body.name || "").trim();
-    const cnpj = (body.cnpj || "").trim();
-    const email = (body.email || "").trim().toLowerCase();
-    const paymentDeadlineDays = Number(body.payment_deadline_days ?? 30);
-    const password = body.password ? String(body.password).trim() : "";
-
-    if (!name || !cnpj || !email) {
-      return new Response(
-        JSON.stringify({ success: false, error: "name, cnpj and email are required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // 1) Cria a empresa
-    const { data: company, error: companyErr } = await supabaseAdmin
-      .from("companies")
-      .insert({
-        name,
-        cnpj,
-        email,
-        payment_deadline_days: Number.isFinite(paymentDeadlineDays) ? paymentDeadlineDays : 30,
-      })
-      .select("id,name,cnpj,email,payment_deadline_days,logo_url")
-      .single();
-
-    if (companyErr) throw companyErr;
-
-    // 2) Cria ou localiza usuário no Auth
-    let userId: string | null = null;
-    let created = false;
-    let invited = false;
-
-    // tenta encontrar existente
-    userId = await findUserIdByEmail(supabaseAdmin, email);
-
-    if (!userId) {
-      if (password && password.length >= 6) {
-        const { data: createdUser, error: createErr } = await supabaseAdmin.auth.admin.createUser({
-          email,
-          password,
-          email_confirm: true,
-          user_metadata: { full_name: name },
-        });
-        if (createErr) throw createErr;
-        userId = createdUser.user?.id ?? null;
-        created = true;
-      } else {
-        // convite por e-mail para definir senha
-        const { data: invitedUser, error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-          data: { full_name: name },
-        });
-        if (inviteErr) throw inviteErr;
-        userId = invitedUser.user?.id ?? null;
-        invited = true;
+    Deno.serve(async (req) => {
+      if (req.method === "OPTIONS") {
+        return new Response("ok", { headers: corsHeaders });
       }
-    }
 
-    if (!userId) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Could not create or locate auth user" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+      try {
+        // Variáveis de ambiente com fallback
+        const PROJECT_URL = Deno.env.get("PROJECT_URL");
+        const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY");
+        const SUPABASE_ANON_KEY =
+          Deno.env.get("SUPABASE_ANON_KEY") ||
+          Deno.env.get("VITE_SUPABASE_ANON_KEY") ||
+          Deno.env.get("SUPABASE_PUBLIC_ANON_KEY");
 
-    // 3) Vincula usuário à empresa
-    const { error: linkErr } = await supabaseAdmin.from("company_users").insert({
-      company_id: company.id,
-      user_id: userId,
+        if (!PROJECT_URL || !SERVICE_ROLE_KEY || !SUPABASE_ANON_KEY) {
+          return new Response(
+            JSON.stringify({ code: 500, message: "Missing env vars" }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        // 1) Authorization header robusto
+        const authHeader =
+          req.headers.get("Authorization") ||
+          req.headers.get("authorization") ||
+          "";
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+          return new Response(
+            JSON.stringify({ code: 401, message: "Missing Authorization" }),
+            { status: 401, headers: corsHeaders }
+          );
+        }
+
+        // 2) Validar JWT
+        const supabaseAnon = createClient(PROJECT_URL, SUPABASE_ANON_KEY, {
+          global: { headers: { Authorization: authHeader } },
+        });
+        const { data: userData, error: userError } = await supabaseAnon.auth.getUser();
+        if (userError || !userData?.user?.id) {
+          return new Response(
+            JSON.stringify({ code: 401, message: "Invalid JWT" }),
+            { status: 401, headers: corsHeaders }
+          );
+        }
+        const userId = userData.user.id;
+
+        // 3) Checar admin global
+        const { data: adminRow } = await supabaseAnon
+          .from("admin_users")
+          .select("id")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (!adminRow) {
+          return new Response(
+            JSON.stringify({ code: 403, message: "Not admin" }),
+            { status: 403, headers: corsHeaders }
+          );
+        }
+
+        // 4) Validar payload
+        const body = await req.json();
+        const { name, cnpj, email, password, payment_deadline_days } = body || {};
+        if (!name) return new Response(JSON.stringify({ code: 400, message: "Missing name" }), { status: 400, headers: corsHeaders });
+        if (!cnpj) return new Response(JSON.stringify({ code: 400, message: "Missing cnpj" }), { status: 400, headers: corsHeaders });
+        if (!email) return new Response(JSON.stringify({ code: 400, message: "Missing email" }), { status: 400, headers: corsHeaders });
+        if (typeof payment_deadline_days !== "number") return new Response(JSON.stringify({ code: 400, message: "Missing payment_deadline_days" }), { status: 400, headers: corsHeaders });
+
+        // 5) Criação com service role
+        const adminClient = createClient(PROJECT_URL, SERVICE_ROLE_KEY);
+
+        // Inserir empresa
+        const { data: company, error: companyErr } = await adminClient
+          .from("companies")
+          .insert({
+            name,
+            cnpj,
+            email,
+            payment_deadline_days,
+            created_by: userId,
+          })
+          .select("id, name")
+          .single();
+        if (companyErr || !company?.id) {
+          console.error("Company creation error:", companyErr);
+          return new Response(
+            JSON.stringify({ code: 500, message: "Failed to create company", context: companyErr?.message }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        // Criar usuário no Auth
+        let createdUser;
+        try {
+          createdUser = await adminClient.auth.admin.createUser({
+            email,
+            password: password || undefined,
+            email_confirm: true,
+          });
+        } catch (e) {
+          console.error("User creation error:", e);
+          return new Response(
+            JSON.stringify({ code: 500, message: "Failed to create user", context: e?.message }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        const userIdCreated = createdUser?.user?.id;
+        if (!userIdCreated) {
+          return new Response(
+            JSON.stringify({ code: 500, message: "User creation failed" }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        // Vincular usuário à empresa
+        const { error: linkErr } = await adminClient
+          .from("company_users")
+          .insert({
+            company_id: company.id,
+            user_id: userIdCreated,
+            role: "user",
+          });
+        if (linkErr) {
+          console.error("Link user error:", linkErr);
+          return new Response(
+            JSON.stringify({ code: 500, message: "Failed to link user to company", context: linkErr?.message }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        // 6) Sucesso
+        return new Response(
+          JSON.stringify({
+            success: true,
+            company: { id: company.id, name: company.name },
+            user: { id: userIdCreated, email },
+          }),
+          { status: 200, headers: corsHeaders }
+        );
+      } catch (e) {
+        console.error("Unexpected error:", e);
+        return new Response(
+          JSON.stringify({ code: 500, message: "Unexpected error", context: e?.message }),
+          { status: 500, headers: corsHeaders }
+        );
+      }
     });
-
-    // Se já existir, ignora.
-    if (linkErr && String(linkErr.message || "").toLowerCase().includes("duplicate")) {
-      // ignore
-    } else if (linkErr) {
-      throw linkErr;
-    }
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        company,
-        auth: { user_id: userId, created, invited },
-      }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (e: any) {
-    return new Response(
-      JSON.stringify({ success: false, error: e?.message || "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

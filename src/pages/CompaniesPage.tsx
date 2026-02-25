@@ -218,58 +218,58 @@ export default function CompaniesPage() {
 
     try {
       if (editingCompany) {
-        // Update existing company
+        // Update existing company (mantém fluxo atual)
         const updateData: any = {
           name: formData.name,
           cnpj: formData.cnpj,
           email: formData.email,
           payment_deadline_days: parseInt(formData.paymentDeadlineDays) || 30,
         };
-
-        // Upload logo if provided
         if (logoFile) {
           const logoUrl = await uploadLogo(editingCompany.id);
-          if (logoUrl) {
-            updateData.logo_url = logoUrl;
-          }
+          if (logoUrl) updateData.logo_url = logoUrl;
         }
-
         const { error: updateError } = await supabase
           .from('companies')
           .update(updateData)
           .eq('id', editingCompany.id);
-
-        if (updateError) {
-          throw updateError;
-        }
-
+        if (updateError) throw updateError;
         toast({
           title: 'Empresa atualizada!',
           description: `A empresa "${formData.name}" foi atualizada com sucesso.`,
         });
       } else {
+        // NOVO: Valida sessão ANTES do invoke
+        const { data: sess } = await supabase.auth.getSession();
+        if (!sess?.session) {
+          toast({ title: 'Sessão expirada, faça login novamente.' });
+          setIsSubmitting(false);
+          return;
+        }
         const payload = {
           name: formData.name,
           cnpj: formData.cnpj,
           email: formData.email,
           payment_deadline_days: parseInt(formData.paymentDeadlineDays) || 30,
-          // senha opcional. Se vazio, a função faz invite (definir senha via e-mail).
           password: formData.password?.trim() ? formData.password.trim() : null,
         };
-
-        // Use supabase-js invoke so the client automatically attaches a valid JWT.
-        // Avoid manually crafting Authorization headers, which can be mangled and cause "Invalid JWT".
+        // Chama SOMENTE invoke
         const { data: fnData, error: fnErr } = await supabase.functions.invoke('company-create-with-user', {
           body: payload,
         });
-        if (fnErr) throw fnErr;
-
+        if (fnErr) {
+          console.error('company-create-with-user', fnErr);
+          toast({ title: fnErr.message || 'Erro ao cadastrar empresa', variant: 'destructive' });
+          setIsSubmitting(false);
+          return;
+        }
         const companyData = (fnData as any)?.company;
         if (!companyData?.id) {
-          throw new Error('Não foi possível criar a empresa.');
+          toast({ title: 'Não foi possível criar a empresa.' });
+          setIsSubmitting(false);
+          return;
         }
-
-        // Upload logo if provided
+        // Upload logo se necessário
         if (logoFile && companyData) {
           const logoUrl = await uploadLogo(companyData.id);
           if (logoUrl) {
@@ -279,15 +279,11 @@ export default function CompaniesPage() {
               .eq('id', companyData.id);
           }
         }
-
-        // Vínculo company_users é feito na Edge Function.
-
         toast({
           title: 'Empresa cadastrada!',
           description: `A empresa "${formData.name}" foi cadastrada com sucesso.`,
         });
       }
-
       setOpen(false);
       setEditingCompany(null);
       setFormData({ name: '', cnpj: '', email: '', password: '', paymentDeadlineDays: '30' });
