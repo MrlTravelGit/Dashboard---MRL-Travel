@@ -56,11 +56,11 @@ export default function HotelsPage() {
             booking_id: b.id,
             hotel_index: idx,
             // Nome do hóspede: preferir fullName, depois main_passenger_name, depois vazio
-            guest_name: b.passengers?.[0]?.fullName || b.main_passenger_name || '',
+            guest_name: b.passengers?.[0]?.name || b.passengers?.[0]?.fullName || b.main_passenger_name || '',
             // Nome do hotel: preferir name, depois hotelName, depois vazio
-            hotel_display_name: h.name || h.hotelName || '',
-            check_in: h.checkIn || '',
-            check_out: h.checkOut || '',
+            hotel_display_name: h.name || h.hotelName || h.hotel_display_name || h.hotel_name || '',
+            check_in: h.checkIn || h.check_in || '',
+            check_out: h.checkOut || h.check_out || '',
           });
         });
       }

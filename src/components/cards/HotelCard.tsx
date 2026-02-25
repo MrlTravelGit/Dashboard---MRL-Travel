@@ -40,9 +40,9 @@ export function HotelCard({ hotel, showSavings = true, viewMode = 'card', onDele
       <div className="flex items-center gap-4 p-3 rounded-lg border border-l-4 border-l-secondary bg-card hover:bg-accent/50 transition-colors">
         <div className="flex items-center gap-2 min-w-[100px]">
           <Building2 className="h-4 w-4 text-secondary" />
-          <span className="font-medium text-sm truncate max-w-[120px]">{hotel.hotel_display_name || hotel.hotelName || hotel.hotel_name || 'Não informado'}</span>
+          <span className="font-medium text-sm truncate max-w-[120px]">{hotel.hotel_display_name || hotel.hotelName || hotel.hotel_name || (hotel as any).name || 'Não informado'}</span>
         </div>
-        <Badge variant="outline" className="text-xs">{hotel.code || hotel.locator || hotel.confirmation_code || '-'}</Badge>
+        <Badge variant="outline" className="text-xs">{hotel.code || hotel.locator || hotel.confirmation_code || (hotel as any).confirmationCode || '-'}</Badge>
         <div className="flex items-center gap-2">
           <span className="text-sm">{hotel.check_in || hotel.checkIn || '-'}</span>
           <ArrowRight className="h-3 w-3 text-muted-foreground" />
@@ -68,10 +68,10 @@ export function HotelCard({ hotel, showSavings = true, viewMode = 'card', onDele
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Building2 className="h-5 w-5" />
-            <span className="font-semibold">{hotel.hotel_display_name || hotel.hotelName || hotel.hotel_name || 'Hotel não informado'}</span>
+          <span className="font-semibold">{hotel.hotel_display_name || hotel.hotelName || hotel.hotel_name || (hotel as any).name || 'Hotel não informado'}</span>
           </div>
           <Badge variant="secondary" className="bg-secondary-foreground/20 text-secondary-foreground border-none">
-            {hotel.code || hotel.locator || hotel.confirmation_code || '-'}
+            {hotel.code || hotel.locator || hotel.confirmation_code || (hotel as any).confirmationCode || '-'}
           </Badge>
         </div>
       </CardHeader>

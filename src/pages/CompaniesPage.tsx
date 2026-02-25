@@ -248,30 +248,6 @@ export default function CompaniesPage() {
           description: `A empresa "${formData.name}" foi atualizada com sucesso.`,
         });
       } else {
-        // Criar empresa + usuário de acesso sem trocar a sessão do admin.
-        // O signUp no client troca a sessão para o usuário recém-criado e quebra o painel.
-        const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-        if (sessionErr) throw sessionErr;
-
-        const accessToken = sessionData?.session?.access_token;
-        if (!accessToken || typeof accessToken !== 'string') {
-          toast({
-            title: 'Sessão expirada',
-            description: 'Sessão expirada, faça login novamente.',
-            variant: 'destructive',
-          });
-          setIsSubmitting(false);
-          return;
-        }
-
-        // Edge Functions esperam um JWT válido (sem quebras de linha/whitespace invisível) + apikey.
-        // Em alguns ambientes, o token pode carregar whitespace invisível. Sanitizamos aqui.
-        const authHeader = (`Bearer ${accessToken}`)
-          .replace(/\r\n\t+/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-        const apiKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || (import.meta.env as any).VITE_SUPABASE_ANON_KEY || '').toString();
-
         const payload = {
           name: formData.name,
           cnpj: formData.cnpj,
@@ -281,36 +257,12 @@ export default function CompaniesPage() {
           password: formData.password?.trim() ? formData.password.trim() : null,
         };
 
-        // Prefer supabase-js invoke to avoid any header mangling in some browsers/proxies.
-        // We still provide an explicit Authorization header to guarantee the session token is used.
-        let fnData, fnErr;
-        try {
-          const result = await supabase.functions.invoke('company-create-with-user', {
-            body: payload,
-            headers: {
-              Authorization: authHeader,
-              ...(apiKey ? { apikey: apiKey } : {}),
-            } as any,
-          });
-          fnData = result.data;
-          fnErr = result.error;
-          if (fnErr) {
-            // Log detalhado
-            console.error('Edge Function 401/erro:', {
-              status: fnErr.status,
-              body: fnErr,
-            });
-          }
-        } catch (err) {
-          // Log detalhado
-          console.error('Edge Function invoke exception:', err);
-          throw err;
-        }
-
-        if (fnErr) {
-          const msg = (fnErr as any)?.message || 'Falha ao cadastrar empresa.';
-          throw new Error(msg);
-        }
+        // Use supabase-js invoke so the client automatically attaches a valid JWT.
+        // Avoid manually crafting Authorization headers, which can be mangled and cause "Invalid JWT".
+        const { data: fnData, error: fnErr } = await supabase.functions.invoke('company-create-with-user', {
+          body: payload,
+        });
+        if (fnErr) throw fnErr;
 
         const companyData = (fnData as any)?.company;
         if (!companyData?.id) {

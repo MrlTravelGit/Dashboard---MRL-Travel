@@ -602,6 +602,35 @@ export default function BookingsPage() {
         return;
       }
 
+      const mainPassengerName = passengersToSave?.[0]?.name || (extractedData?.reservedBy ?? '').toString().trim();
+
+      // Normaliza hotéis para garantir que as outras telas consigam ler (compatível com formatos antigos)
+      const hotelsToSave = (extractedData.hotels || []).map((h: any) => ({
+        ...h,
+        // Campos canônicos
+        name: h.name || h.hotelName || h.hotel_display_name || h.hotel_name || '',
+        confirmationCode: h.confirmationCode || h.confirmation_code || h.code || h.locator || '',
+        checkIn: h.checkIn || h.check_in || h.checkin || '',
+        checkOut: h.checkOut || h.check_out || h.checkout || '',
+        // Fallbacks usados por cards/abas antigas
+        hotelName: h.hotelName || h.name || h.hotel_display_name || h.hotel_name || '',
+        hotel_display_name: h.hotel_display_name || h.name || h.hotelName || h.hotel_name || '',
+        hotel_name: h.hotel_name || h.name || h.hotelName || h.hotel_display_name || '',
+        confirmation_code: h.confirmation_code || h.confirmationCode || h.code || '',
+        code: h.code || h.confirmationCode || h.confirmation_code || '',
+        guestName: h.guestName || h.guest_name || mainPassengerName || '',
+        guest_name: h.guest_name || h.guestName || mainPassengerName || '',
+      }));
+
+      // Normaliza voos para exibir o nome do passageiro principal quando o extrator não retorna
+      const flightsToSave = (extractedData.flights || []).map((f: any) => ({
+        ...f,
+        passengerName: (f.passengerName ?? '').toString().trim() || mainPassengerName || '',
+      }));
+
+      // Normaliza carros: o extrator pode retornar em "cars"; o banco usa "car_rentals"
+      const carRentalsToSave = extractedData.carRentals || extractedData.cars || extractedData.car_rentals || [];
+
       // Cria reserva com todos os dados extraídos (inclusive hotels, flights, car_rentals, passengers)
       const { data: insertedBooking, error } = await supabase
         .from('bookings')
@@ -609,9 +638,9 @@ export default function BookingsPage() {
           company_id: formData.companyId,
           name: formData.title || 'Nova Reserva',
           source_url: formData.url,
-          flights: extractedData.flights || [],
-          hotels: extractedData.hotels || [],
-          car_rentals: extractedData.carRentals || [],
+          flights: flightsToSave,
+          hotels: hotelsToSave,
+          car_rentals: Array.isArray(carRentalsToSave) ? carRentalsToSave : [],
           passengers: passengersToSave,
           total_paid: totalPaid,
           total_original: totalOriginal,
@@ -713,8 +742,15 @@ export default function BookingsPage() {
     if (booking.flights && booking.flights.length > 0 && booking.flights[0].passengerName) {
       return booking.flights[0].passengerName;
     }
-    if (booking.hotels && booking.hotels.length > 0 && booking.hotels[0].guestName) {
-      return booking.hotels[0].guestName;
+    if (booking.hotels && booking.hotels.length > 0) {
+      const h: any = booking.hotels[0];
+      const guest = (h.guestName || h.guest_name || '').toString().trim();
+      if (guest) return guest;
+    }
+    if (booking.passengers && booking.passengers.length > 0) {
+      const p0: any = booking.passengers[0];
+      const n = (p0.name || p0.fullName || '').toString().trim();
+      if (n) return n;
     }
     return '';
   };
@@ -954,11 +990,11 @@ export default function BookingsPage() {
                           )}
 
                           {/* Car Rentals Preview */}
-                          {extractedData.carRentals?.length > 0 && (
+                          {((extractedData.carRentals || extractedData.cars) as any[])?.length > 0 && (
                             <div className="border-t pt-3 mt-2">
                               <div className="text-xs font-medium text-foreground mb-2">Aluguel de Carro Identificado</div>
                               <div className="space-y-2">
-                                {extractedData.carRentals.map((c: any, idx: number) => (
+                                {(extractedData.carRentals || extractedData.cars).map((c: any, idx: number) => (
                                   <div key={idx} className="p-2 rounded border bg-background/50 text-sm">
                                     <div className="font-medium">{c.company || c.locadora || 'Locadora'}</div>
                                     <div className="text-muted-foreground text-xs mt-1">Retirada: {c.pickupDateTime || c.pickupDate || '-'}</div>
