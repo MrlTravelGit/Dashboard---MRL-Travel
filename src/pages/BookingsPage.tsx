@@ -575,6 +575,18 @@ export default function BookingsPage() {
 
     try {
       const { data: userData } = await supabase.auth.getUser();
+
+      const toIsoDate = (raw?: any): string | null => {
+        const s = (raw ?? '').toString().trim();
+        if (!s) return null;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (m) {
+          const [, dd, mm, yyyy] = m;
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        return null;
+      };
       // Passengers: garantir array de objetos com nome, cpf, etc
       const passengersToSave = (extractedData.passengers || []).map((p: any, idx: number) => {
         const extractedName = (p.name ?? "").trim();
@@ -584,11 +596,11 @@ export default function BookingsPage() {
         const finalName = extractedName || editedName;
         return {
           name: finalName,
-          cpf: p.cpf,
-          birthDate: p.birthDate,
-          phone: p.phone,
-          email: p.email,
-          passport: p.passport,
+          cpf: cpfDigits || (p.cpf ?? ''),
+          birthDate: toIsoDate(p.birthDate ?? p.birth_date ?? p.nasc ?? p.birth),
+          phone: (p.phone ?? '').toString(),
+          email: p.email ?? null,
+          passport: p.passport ?? null,
         };
       });
 
@@ -651,52 +663,26 @@ export default function BookingsPage() {
 
       if (error) throw error;
 
-      // Auto-register employees if option is enabled and passengers were extracted
+      // Auto-register employees (definitive): delegate to Edge Function with service role.
+      // This avoids RLS/constraint differences and ensures passengers with manually filled names are included.
       let employeesCreated = 0;
       if (autoRegisterEmployees && passengersToSave?.length > 0) {
-        for (const passenger of passengersToSave) {
-          // Only require name and CPF. Birth date is optional.
-          if (!passenger.name || !passenger.cpf) {
-            continue; // Skip only if REQUIRED fields are missing
-          }
+        const { data: upsertRes, error: upsertErr } = await supabase.functions.invoke('upsert-employees', {
+          body: {
+            company_id: formData.companyId,
+            passengers: passengersToSave,
+          },
+        });
 
-          const cleanCpf = passenger.cpf.replace(/\D/g, '');
-          if (cleanCpf.length !== 11) {
-            console.warn('Invalid CPF length for passenger:', passenger.name);
-            continue;
-          }
-
-          const birthDateValue = (passenger.birthDate ?? '').toString().trim() || null;
-
-          // Check if employee already exists by CPF
-          const { data: existingEmployee } = await supabase
-            .from('employees')
-            .select('id')
-            .eq('cpf', cleanCpf)
-            .eq('company_id', formData.companyId)
-            .maybeSingle();
-
-          if (!existingEmployee) {
-            // Use a default phone if not provided (required by DB)
-            const phoneValue = passenger.phone?.replace(/\D/g, '') || '';
-            
-            const { error: empError } = await supabase.from('employees').insert({
-              company_id: formData.companyId,
-              full_name: passenger.name,
-              cpf: cleanCpf,
-              birth_date: birthDateValue,
-              phone: phoneValue || 'Não informado',
-              email: passenger.email || null,
-              passport: passenger.passport || null,
-              created_by: userData.user?.id,
-            });
-
-            if (!empError) {
-              employeesCreated++;
-            } else {
-              console.warn('Error creating employee:', empError);
-            }
-          }
+        if (upsertErr) {
+          console.warn('upsert-employees error:', upsertErr);
+          toast({
+            title: 'Erro ao cadastrar funcionários',
+            description: upsertErr.message || 'Não foi possível cadastrar funcionários automaticamente.',
+            variant: 'destructive',
+          });
+        } else {
+          employeesCreated = Number((upsertRes as any)?.upserted ?? 0) || 0;
         }
       }
 
