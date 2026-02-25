@@ -585,7 +585,7 @@ export default function BookingsPage() {
         return {
           name: finalName,
           cpf: p.cpf,
-          birthDate: p.birthDate ?? null,
+          birthDate: p.birthDate,
           phone: p.phone,
           email: p.email,
           passport: p.passport,
@@ -654,38 +654,48 @@ export default function BookingsPage() {
       // Auto-register employees if option is enabled and passengers were extracted
       let employeesCreated = 0;
       if (autoRegisterEmployees && passengersToSave?.length > 0) {
-        for (const [idx, passenger] of passengersToSave.entries()) {
-          // CPF obrigatório para employees
-          const cpfDigits = (passenger.cpf ?? '').toString().replace(/\D/g, '');
-          if (!cpfDigits) {
-            console.warn('Passageiro sem CPF, ignorado no cadastro de funcionário:', passenger.name);
+        for (const passenger of passengersToSave) {
+          // Only require name and CPF. Birth date is optional.
+          if (!passenger.name || !passenger.cpf) {
+            continue; // Skip only if REQUIRED fields are missing
+          }
+
+          const cleanCpf = passenger.cpf.replace(/\D/g, '');
+          if (cleanCpf.length !== 11) {
+            console.warn('Invalid CPF length for passenger:', passenger.name);
             continue;
           }
-          const finalName = (passenger.name ?? '').trim();
-          if (!finalName) {
-            console.warn('Passageiro sem nome, ignorado no cadastro de funcionário.');
-            continue;
-          }
-          // Permitir birth_date nulo
-          const birthDate = passenger.birthDate ?? null;
-          // Upsert por (company_id, cpf)
-          const phoneValue = passenger.phone?.replace(/\D/g, '') || 'Não informado';
-          const { error: empError } = await supabase
+
+          const birthDateValue = (passenger.birthDate ?? '').toString().trim() || null;
+
+          // Check if employee already exists by CPF
+          const { data: existingEmployee } = await supabase
             .from('employees')
-            .upsert({
+            .select('id')
+            .eq('cpf', cleanCpf)
+            .eq('company_id', formData.companyId)
+            .maybeSingle();
+
+          if (!existingEmployee) {
+            // Use a default phone if not provided (required by DB)
+            const phoneValue = passenger.phone?.replace(/\D/g, '') || '';
+            
+            const { error: empError } = await supabase.from('employees').insert({
               company_id: formData.companyId,
-              full_name: finalName,
-              cpf: cpfDigits,
-              birth_date: birthDate,
-              phone: phoneValue,
+              full_name: passenger.name,
+              cpf: cleanCpf,
+              birth_date: birthDateValue,
+              phone: phoneValue || 'Não informado',
               email: passenger.email || null,
               passport: passenger.passport || null,
               created_by: userData.user?.id,
-            }, { onConflict: 'company_id,cpf' });
-          if (!empError) {
-            employeesCreated++;
-          } else {
-            console.warn('Error creating employee:', empError);
+            });
+
+            if (!empError) {
+              employeesCreated++;
+            } else {
+              console.warn('Error creating employee:', empError);
+            }
           }
         }
       }
