@@ -11,14 +11,6 @@ export const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-// Guardrail: if someone accidentally puts an access token in the key env var, surface it loudly.
-if (typeof SUPABASE_KEY === "string" && SUPABASE_KEY.startsWith("eyJ")) {
-  // eslint-disable-next-line no-console
-  console.error(
-    "Supabase key env var looks like a JWT. Use the project's ANON key in VITE_SUPABASE_ANON_KEY.",
-  );
-}
-
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   // Fail fast with a helpful message instead of confusing 401/404 errors.
   // eslint-disable-next-line no-console
