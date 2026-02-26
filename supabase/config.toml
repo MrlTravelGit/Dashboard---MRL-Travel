@@ -3,6 +3,13 @@ project_id = "bejbsvyzncpqzcpmzxgg"
 [functions.extract-iddas-booking]
 verify_jwt = false
 
+# Importante:
+# Esta função é chamada diretamente pelo browser e o preflight (OPTIONS)
+# não envia o header Authorization. Se verify_jwt ficar true, o gateway
+# do Supabase bloqueia a requisição antes do código rodar, causando erro de CORS.
+[functions.upsert-employees]
+verify_jwt = false
+
 # These extractors are used by the admin UI and should not fail with 401 when the session
 # hasn't loaded yet. If you prefer to require auth, set verify_jwt=true and ensure the
 # frontend sends Authorization Bearer token explicitly.

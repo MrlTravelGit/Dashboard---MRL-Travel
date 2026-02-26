@@ -1100,17 +1100,6 @@ serve(async (req: Request) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  // Como o verify_jwt fica desativado para permitir o preflight (OPTIONS),
-  // exigimos um Bearer token nas chamadas reais.
-  const authHeader = req.headers.get("Authorization") || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  if (!token) {
-    return new Response(JSON.stringify({ error: "Missing Authorization Bearer token" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
   try {
     const bodyText = await req.text();
     const body = bodyText ? JSON.parse(bodyText) : null;
