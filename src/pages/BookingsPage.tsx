@@ -663,8 +663,8 @@ export default function BookingsPage() {
 
       if (error) throw error;
 
-      // Auto-register employees: upsert diretamente na tabela de funcionários.
-      // Isso evita dependência de Edge Function e reduz chance de 401 por JWT.
+      // Auto-register employees
+      // Preferimos usar Edge Function (service role) para não depender de permissões/RLS no client.
       let employeesCreated = 0;
       if (autoRegisterEmployees && passengersToSave?.length > 0) {
         try {
@@ -719,13 +719,42 @@ export default function BookingsPage() {
           const payload = Array.from(unique.values());
 
           if (payload.length > 0) {
-            const { data: upserted, error: empErr } = await supabase
-              .from('employees')
-              .upsert(payload, { onConflict: 'company_id,cpf' })
-              .select('id');
+            const employees = payload.map((p: any) => ({
+              cpf: p.cpf,
+              full_name: p.full_name,
+              birth_date: p.birth_date,
+              phone: p.phone,
+              email: p.email,
+              created_by: createdBy,
+            }));
 
-            if (empErr) throw empErr;
-            employeesCreated = upserted?.length ?? 0;
+            const invoke = async () => {
+              const { data, error } = await supabase.functions.invoke('upsert-employees', {
+                body: { companyId: formData.companyId, employees },
+              });
+              if (error) throw error;
+              return data as any;
+            };
+
+            try {
+              const res = await invoke();
+              employeesCreated = Number(res?.upserted ?? 0);
+            } catch (err1: any) {
+              const msg = String(err1?.message || err1?.error_description || '');
+              const looksAuth = /jwt|token|unauthori|401/i.test(msg) || err1?.status === 401;
+              if (looksAuth) {
+                // tenta renovar sessão e repetir uma vez
+                try {
+                  await supabase.auth.refreshSession();
+                } catch {
+                  // ignore
+                }
+                const res2 = await invoke();
+                employeesCreated = Number(res2?.upserted ?? 0);
+              } else {
+                throw err1;
+              }
+            }
           }
         } catch (e: any) {
           console.warn('employees upsert error:', e);
