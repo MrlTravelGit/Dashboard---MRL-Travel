@@ -663,26 +663,77 @@ export default function BookingsPage() {
 
       if (error) throw error;
 
-      // Auto-register employees (definitive): delegate to Edge Function with service role.
-      // This avoids RLS/constraint differences and ensures passengers with manually filled names are included.
+      // Auto-register employees: upsert diretamente na tabela de funcionários.
+      // Isso evita dependência de Edge Function e reduz chance de 401 por JWT.
       let employeesCreated = 0;
       if (autoRegisterEmployees && passengersToSave?.length > 0) {
-        const { data: upsertRes, error: upsertErr } = await supabase.functions.invoke('upsert-employees', {
-          body: {
-            company_id: formData.companyId,
-            passengers: passengersToSave,
-          },
-        });
+        try {
+          const { data: userRes } = await supabase.auth.getUser();
+          const createdBy = userRes?.user?.id ?? null;
 
-        if (upsertErr) {
-          console.warn('upsert-employees error:', upsertErr);
+          const toISODate = (value: any): string | null => {
+            if (!value) return null;
+            const raw = String(value).trim();
+            if (!raw) return null;
+
+            if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+            const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+            if (m) {
+              const dd = m[1];
+              const mm = m[2];
+              const yyyy = m[3];
+              return `${yyyy}-${mm}-${dd}`;
+            }
+
+            const d = new Date(raw);
+            if (Number.isNaN(d.getTime())) return null;
+            return d.toISOString().slice(0, 10);
+          };
+
+          const unique = new Map<string, any>();
+
+          for (const p of passengersToSave) {
+            const cpf = normalizeCpfDigits((p as any)?.cpf || '');
+            const full_name = String((p as any)?.name || '').trim();
+            if (!cpf || !full_name) continue;
+
+            const birth_date = toISODate((p as any)?.birth_date || (p as any)?.birthDate || (p as any)?.nasc);
+            const phone = String((p as any)?.phone || (p as any)?.tel || '').trim() || null;
+            const email = String((p as any)?.email || '').trim() || null;
+
+            const key = `${formData.companyId}:${cpf}`;
+            if (!unique.has(key)) {
+              unique.set(key, {
+                company_id: formData.companyId,
+                cpf,
+                full_name,
+                birth_date,
+                phone,
+                email,
+                created_by: createdBy,
+              });
+            }
+          }
+
+          const payload = Array.from(unique.values());
+
+          if (payload.length > 0) {
+            const { data: upserted, error: empErr } = await supabase
+              .from('employees')
+              .upsert(payload, { onConflict: 'company_id,cpf' })
+              .select('id');
+
+            if (empErr) throw empErr;
+            employeesCreated = upserted?.length ?? 0;
+          }
+        } catch (e: any) {
+          console.warn('employees upsert error:', e);
           toast({
             title: 'Erro ao cadastrar funcionários',
-            description: upsertErr.message || 'Não foi possível cadastrar funcionários automaticamente.',
+            description: e?.message || 'Não foi possível cadastrar funcionários automaticamente.',
             variant: 'destructive',
           });
-        } else {
-          employeesCreated = Number((upsertRes as any)?.upserted ?? 0) || 0;
         }
       }
 

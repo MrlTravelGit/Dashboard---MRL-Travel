@@ -53,7 +53,7 @@ export default function EmployeesPage() {
   const [searchTerm, setSearchTerm] = useState('');
 
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('all');
   const [forcedCompanyId, setForcedCompanyId] = useState<string | null>(null);
 
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
@@ -235,7 +235,7 @@ const handleDeleteEmployee = async (employeeId: string) => {
                   <SelectValue placeholder="Selecione a empresa" />
                 </SelectTrigger>
                 <SelectContent>
-                    <SelectItem value="">Todas as empresas</SelectItem>
+                    <SelectItem value="all">Todas as empresas</SelectItem>
                   {companies.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.name}
