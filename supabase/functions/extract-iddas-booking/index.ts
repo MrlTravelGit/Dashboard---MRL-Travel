@@ -867,49 +867,159 @@ const lines = tail
 
 function extractPassengersFromDom(doc: any): Passenger[] {
   try {
-    const ps: Passenger[] = [];
-    const nodes = doc?.querySelectorAll?.("p.fs-6") || [];
-    for (const p of nodes) {
-      const nameEl = p.querySelector?.("span.fw-semibold");
-      const rawName = (nameEl?.textContent || "").trim();
-      const fullText = (p.textContent || "").replace(/\u00a0/g, " ").replace(/[\u200B-\u200D\uFEFF]/g, " ").trim();
+    const candidates: Passenger[] = [];
+    const passengerEls = Array.from(doc?.querySelectorAll?.('p.fs-6') || []);
+    for (const el of passengerEls) {
+      const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!/\bCPF\b/i.test(txt)) continue;
 
-      // Prefer the text that comes after the name span
-      let details = fullText;
-      if (rawName && fullText.toLowerCase().startsWith(rawName.toLowerCase())) {
-        details = fullText.slice(rawName.length).trim();
-      }
+      const nameEl = el.querySelector?.('span.fw-semibold');
+      const fullName = (nameEl?.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!fullName) continue;
 
-      const cpfMatch = details.match(/CPF\s*([0-9.\-]{11,14})/i);
-      if (!cpfMatch) continue;
-      const cpfDigits = normalizeCPF(cpfMatch[1]);
-      if (cpfDigits.length !== 11) continue;
+      const cpfMatch = txt.match(/\bCPF\s*([0-9.\-]{11,})/i);
+      const birthMatch = txt.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
 
-      const birthMatch = details.match(/(\d{2}\/\d{2}\/\d{4})/);
-      const phoneMatch = details.match(/\(\d{2}\)\s*\d{4,5}-\d{4}/);
-      const emailMatch = details.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+      const cpf = normalizeCpf(cpfMatch?.[1] || '');
+      const birthDate = parseDateBRToISO(birthMatch?.[1] || '');
 
-      // Clean name: remove trailing role/company like "(BR4)" or "(Gestão)"
-      let name = rawName || "";
-      name = name.replace(/\s*\([^)]*\)\s*$/g, "").trim();
-      name = sanitizePassengerName(name);
-
-      ps.push({
-        fullName: name,
-        cpf: cpfDigits,
-        birthDate: birthMatch ? birthMatch[1] : "",
-        phone: phoneMatch ? phoneMatch[0] : "",
-        email: emailMatch ? emailMatch[0] : "",
-        passport: "",
-        passportExpiry: "",
+      candidates.push({
+        fullName,
+        cpf: cpf || undefined,
+        birthDate: birthDate || undefined,
+        phone: undefined,
+        email: undefined,
+        raw: txt,
       });
     }
-    return ps;
-  } catch {
+
+    // Deduplicate by CPF (preferred) or name
+    const byKey = new Map<string, Passenger>();
+    for (const p of candidates) {
+      const key = p.cpf ? `cpf:${p.cpf}` : `name:${p.fullName.toUpperCase()}`;
+      if (!byKey.has(key)) byKey.set(key, p);
+    }
+    return Array.from(byKey.values());
+  } catch (_) {
     return [];
   }
 }
 
+
+
+
+function parseDateBRToISO(dateBR: string): string | null {
+  const m = dateBR.match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/);
+  if (!m) return null;
+  const [_, dd, mm, yyyy] = m;
+  const d = Number(dd), mo = Number(mm), y = Number(yyyy);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function normalizeCpf(raw: string): string {
+  const digits = (raw || '').replace(/\D/g, '');
+  return digits.length >= 11 ? digits.slice(-11) : digits;
+}
+
+function extractPassengersFromDom(doc: any): Passenger[] {
+  try {
+    const candidates: Passenger[] = [];
+    const passengerEls = Array.from(doc.querySelectorAll('p.fs-6'));
+    for (const el of passengerEls) {
+      const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!/\bCPF\b/i.test(txt)) continue;
+
+      const nameEl = el.querySelector('span.fw-semibold');
+      const name = (nameEl?.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!name) continue;
+
+      const cpfMatch = txt.match(/\bCPF\s*([0-9.\-]{11,})/i);
+      const birthMatch = txt.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
+
+      const cpf = normalizeCpf(cpfMatch?.[1] || '');
+      const birthDate = parseDateBRToISO(birthMatch?.[1] || '');
+
+      candidates.push({
+        name,
+        cpf: cpf || undefined,
+        birthDate: birthDate || undefined,
+        raw: txt,
+      });
+    }
+
+    // Deduplicate by CPF (preferred) or name
+    const byKey = new Map<string, Passenger>();
+    for (const p of candidates) {
+      const key = p.cpf ? `cpf:${p.cpf}` : `name:${p.name.toUpperCase()}`;
+      if (!byKey.has(key)) byKey.set(key, p);
+    }
+    return Array.from(byKey.values());
+  } catch (_) {
+    return [];
+  }
+}
+
+function matchAllHotelsFromDom(doc: any): ExtractedHotel[] {
+  try {
+    const results: ExtractedHotel[] = [];
+
+    // The most reliable anchor is the reservation badge (Número da Reserva)
+    const badges = Array.from(doc.querySelectorAll('span.badge'));
+    for (const b of badges) {
+      const title = (b.getAttribute?.('data-bs-original-title') || '').toLowerCase();
+      const badgeText = (b.textContent || '').replace(/\s+/g, ' ').trim();
+
+      if (!title.includes('reserva') || !title.includes('hosped')) continue;
+      if (!badgeText) continue;
+
+      // Walk up to the hotel row container
+      let node: any = b;
+      while (node && node.tagName !== 'BODY') {
+        const cls = (node.getAttribute?.('class') || '');
+        if (cls.includes('row') && cls.includes('mb-1')) break;
+        node = node.parentElement;
+      }
+      if (!node) continue;
+
+      const nameEl = node.querySelector('h6.hDescricao');
+      const rawName = (nameEl?.textContent || '').replace(/\s+/g, ' ').trim();
+      const name = rawName.replace(/\s*★\s*/g, ' ').trim() || rawName;
+
+      // Address (optional)
+      const addrEl = node.querySelector('a[href*="google.com/maps"]');
+      const address = (addrEl?.textContent || '').replace(/\s+/g, ' ').trim();
+
+      // Dates are usually in the right column: "DD/MM/YYYY 14h -> DD/MM/YYYY"
+      const rightText = (node.textContent || '').replace(/\s+/g, ' ');
+      const dateMatches = rightText.match(/\b\d{2}\/\d{2}\/\d{4}\b/g) || [];
+      const checkInBR = dateMatches[0];
+      const checkOutBR = dateMatches[1];
+
+      const checkIn = parseDateBRToISO(checkInBR || '') || undefined;
+      const checkOut = parseDateBRToISO(checkOutBR || '') || undefined;
+
+      results.push({
+        name: name || 'Hospedagem',
+        checkIn,
+        checkOut,
+        confirmationCode: badgeText,
+        address: address || undefined,
+        rawText: node.textContent || '',
+      });
+    }
+
+    // Deduplicate by confirmation code
+    const byCode = new Map<string, ExtractedHotel>();
+    for (const h of results) {
+      const key = h.confirmationCode || `${h.name}|${h.checkIn}|${h.checkOut}`;
+      if (!byCode.has(key)) byCode.set(key, h);
+    }
+    return Array.from(byCode.values());
+  } catch (_) {
+    return [];
+  }
+}
 
 function matchAllHotels(pageText: string): ExtractedHotel[] {
   const hotels: ExtractedHotel[] = [];
@@ -1130,7 +1240,17 @@ const reservedBy = extractReservedBy(pageText);
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
     
     const flights = matchAllFlights(pageText, mainPassengerName);
-    const hotels = matchAllHotels(pageText) || [];
+    const hotelsText = matchAllHotels(pageText) || [];
+    const hotelsMerged = [...(hotelsDom || []), ...hotelsText];
+
+    const hotelSeen = new Set<string>();
+    const hotels: ExtractedHotel[] = [];
+    for (const h of hotelsMerged) {
+      const key = h.confirmationCode || `${h.name}|${h.checkIn || ''}|${h.checkOut || ''}`;
+      if (hotelSeen.has(key)) continue;
+      hotelSeen.add(key);
+      hotels.push(h);
+    }
     const cars = matchAllCars(pageText) || [];
 
     const suggestedTitle =
