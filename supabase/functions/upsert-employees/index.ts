@@ -76,19 +76,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: adminRow } = await supabaseAnon
-      .from("admin_users")
-      .select("user_id")
-      .eq("user_id", userData.user.id)
-      .maybeSingle();
-
-    if (!adminRow) {
-      return new Response(JSON.stringify({ code: 403, message: "Not admin" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const body = await req.json().catch(() => null);
     const company_id = body?.company_id as string | undefined;
     const passengers = (body?.passengers as Passenger[] | undefined) ?? [];
@@ -105,6 +92,29 @@ Deno.serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Permissão: admin OU membro da empresa informada
+    const { data: adminRow } = await supabaseAnon
+      .from("admin_users")
+      .select("user_id")
+      .eq("user_id", userData.user.id)
+      .maybeSingle();
+
+    if (!adminRow) {
+      const { data: membershipRow } = await supabaseAnon
+        .from("company_users")
+        .select("company_id")
+        .eq("user_id", userData.user.id)
+        .eq("company_id", company_id)
+        .maybeSingle();
+
+      if (!membershipRow) {
+        return new Response(JSON.stringify({ code: 403, message: "Forbidden" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     const supabaseAdmin = createClient(PROJECT_URL, SERVICE_ROLE_KEY);

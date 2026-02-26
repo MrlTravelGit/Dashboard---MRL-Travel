@@ -150,7 +150,8 @@ export default function EmployeesPage() {
   // Recarrega quando o admin muda o filtro
   useEffect(() => {
     if (!isAdmin) return;
-    void fetchEmployees(selectedCompanyId || null);
+    const companyId = selectedCompanyId && selectedCompanyId !== 'all' ? selectedCompanyId : null;
+    void fetchEmployees(companyId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCompanyId, isAdmin]);
 
@@ -234,7 +235,7 @@ const handleDeleteEmployee = async (employeeId: string) => {
                   <SelectValue placeholder="Selecione a empresa" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todas as empresas</SelectItem>
+                    <SelectItem value="">Todas as empresas</SelectItem>
                   {companies.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.name}
