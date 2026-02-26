@@ -19,8 +19,7 @@ import { Plus, Search, Package, Plane, Building2, Car, LayoutGrid, LayoutList, L
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { Flight, Hotel, CarRental, Company } from '@/types/booking';
-import { supabase } from '@/integrations/supabase/client';
-import { invokeWithAuth } from '@/integrations/supabase/invokeWithAuth';
+import { supabase, SUPABASE_URL, SUPABASE_KEY } from '@/integrations/supabase/client';
 
 interface BookingFromDB {
   id: string;
@@ -230,6 +229,15 @@ export default function BookingsPage() {
     setNeedsHeadlessRetry(false);
 
     try {
+      // Em alguns ambientes (principalmente produção), o invoke pode não enviar o JWT automaticamente.
+      // Garantimos aqui o header Authorization para evitar 401 na Edge Function.
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+
+      const authHeader = sessionData.session?.access_token
+        ? { Authorization: `Bearer ${sessionData.session.access_token}` }
+        : undefined;
+
       const url = formData.url.trim();
 
       // Para links do IDDAS, usamos a função específica (mais simples e sem dependências externas).
@@ -237,7 +245,61 @@ export default function BookingsPage() {
       const isIddasLink = /agencia\.iddas\.com\.br\/reserva\//i.test(url);
       const functionName = isIddasLink ? 'extract-iddas-booking' : 'extract-booking-from-link';
 
-      const result = await invokeWithAuth<any>(functionName, { url });
+      // Helper: try supabase.functions.invoke with retries, then fallback to direct fetch
+      const invokeWithRetry = async (fnName: string, body: any, headers?: Record<string, string | undefined>, attempts = 3) => {
+        let lastError: any = null;
+        for (let i = 0; i < attempts; i++) {
+          try {
+            console.debug(`Invoking function ${fnName}, attempt ${i + 1}`);
+            const res = await supabase.functions.invoke(fnName, { body, headers });
+            // supabase returns { data, error }
+            if ((res as any).error) throw (res as any).error;
+            return (res as any).data;
+          } catch (err) {
+            console.warn(`Invoke attempt ${i + 1} failed for ${fnName}:`, err);
+            lastError = err;
+            // small backoff
+            await new Promise(r => setTimeout(r, 200 * (i + 1)));
+          }
+        }
+
+        // Fallback: try direct fetch to Functions HTTP endpoint
+        try {
+          const endpoint = `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/${fnName}`;
+          const fetchHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          // Prefer Authorization from session, otherwise use anon/publishable key
+          if (headers?.Authorization) fetchHeaders.Authorization = headers.Authorization as string;
+          else if (SUPABASE_KEY) fetchHeaders.apikey = SUPABASE_KEY;
+
+          console.debug('Fallback fetch to', endpoint);
+          const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: fetchHeaders,
+            body: JSON.stringify(body),
+          });
+
+          const text = await resp.text();
+          let parsed: any = null;
+          try { parsed = JSON.parse(text); } catch (_) { parsed = text; }
+
+          if (!resp.ok) {
+            const err = new Error(`Function fetch failed with status ${resp.status}`);
+            (err as any).status = resp.status;
+            (err as any).body = parsed;
+            throw err;
+          }
+
+          return parsed;
+        } catch (fallbackErr) {
+          (fallbackErr as any).original = lastError;
+          throw fallbackErr;
+        }
+      };
+
+      // invokeWithRetry returns the parsed response (or throws on network/fetch errors)
+      const result = await invokeWithRetry(functionName, { url }, authHeader);
 
       if (import.meta.env.DEV) {
         console.log('[EXTRACT] raw result', result);
@@ -421,7 +483,18 @@ export default function BookingsPage() {
 
     setIsHeadlessExtracting(true);
     try {
-      const data = await invokeWithAuth<any>('extract-iddas-booking-headless', { url });
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+      const authHeader = sessionData.session?.access_token
+        ? { Authorization: `Bearer ${sessionData.session.access_token}` }
+        : undefined;
+
+      const { data, error } = await supabase.functions.invoke('extract-iddas-booking-headless', {
+        body: { url },
+        headers: authHeader,
+      });
+
+      if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Falha na extração completa');
 
       const payload: any = data?.data?.data ?? data?.data ?? data;
