@@ -10,6 +10,7 @@ import { Plus, Plane, Upload, FileImage, Loader2, Check, Link2 } from 'lucide-re
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeWithAuth } from '@/integrations/supabase/invokeWithAuth';
 import { Flight } from '@/types/booking';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -200,16 +201,10 @@ export function FlightForm({ onSaved }: FlightFormProps) {
         reader.readAsDataURL(uploadedFile);
       });
 
-      const { data, error } = await supabase.functions.invoke('extract-flight-data', {
-        body: {
-          imageBase64: base64,
-          mimeType: uploadedFile.type,
-        },
+      const data = await invokeWithAuth<any>('extract-flight-data', {
+        imageBase64: base64,
+        mimeType: uploadedFile.type,
       });
-
-      if (error) {
-        throw new Error(error.message || 'Erro ao extrair dados');
-      }
 
       if (data?.success && data?.data?.flights?.length > 0) {
         setExtractedFlights(data.data.flights);
@@ -252,11 +247,7 @@ export function FlightForm({ onSaved }: FlightFormProps) {
     setLinkMeta(null);
 
     try {
-      const { data, error } = await supabase.functions.invoke('extract-iddas-booking', {
-        body: { url },
-      });
-
-      if (error) throw error;
+      const data = await invokeWithAuth<any>('extract-iddas-booking', { url });
       if (!data?.success) throw new Error(data?.error || 'Falha ao extrair do link');
 
       const flights = Array.isArray(data.data?.flights) ? data.data.flights : [];

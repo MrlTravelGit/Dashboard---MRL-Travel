@@ -11,6 +11,7 @@ import { Plus, Search, Building2, Trash2, Loader2, Upload, X, Pencil } from 'luc
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeWithAuth } from '@/integrations/supabase/invokeWithAuth';
 import { Company } from '@/types/booking';
 
 interface CompanyWithLogo extends Company {
@@ -74,11 +75,10 @@ export default function CompaniesPage() {
 
     setIsChangingPassword(true);
     try {
-      const { data, error } = await supabase.functions.invoke('company-set-password', {
-        body: { company_id: editingCompany.id, new_password: password },
+      const data = await invokeWithAuth<any>('company-set-password', {
+        company_id: editingCompany.id,
+        new_password: password,
       });
-
-      if (error) throw error;
       if (!data?.success) {
         throw new Error(data?.error || 'Não foi possível alterar a senha.');
       }
@@ -253,17 +253,8 @@ export default function CompaniesPage() {
           payment_deadline_days: parseInt(formData.paymentDeadlineDays) || 30,
           password: formData.password?.trim() ? formData.password.trim() : null,
         };
-        // Chama SOMENTE invoke
-        const { data: fnData, error: fnErr } = await supabase.functions.invoke('company-create-with-user', {
-          body: payload,
-        });
-        if (fnErr) {
-          console.error('company-create-with-user', fnErr);
-          toast({ title: fnErr.message || 'Erro ao cadastrar empresa', variant: 'destructive' });
-          setIsSubmitting(false);
-          return;
-        }
-        const companyData = (fnData as any)?.company;
+        const fnData = await invokeWithAuth<any>('company-create-with-user', payload);
+        const companyData = fnData?.company;
         if (!companyData?.id) {
           toast({ title: 'Não foi possível criar a empresa.' });
           setIsSubmitting(false);
