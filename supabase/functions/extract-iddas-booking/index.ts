@@ -860,49 +860,6 @@ const lines = tail
 }
 
 
-function extractPassengersFromDom(doc: any): Passenger[] {
-  try {
-    const candidates: Passenger[] = [];
-    const passengerEls = Array.from(doc?.querySelectorAll?.('p.fs-6') || []);
-    for (const el of passengerEls) {
-      const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!/\bCPF\b/i.test(txt)) continue;
-
-      const nameEl = el.querySelector?.('span.fw-semibold');
-      const fullName = (nameEl?.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!fullName) continue;
-
-      const cpfMatch = txt.match(/\bCPF\s*([0-9.\-]{11,})/i);
-      const birthMatch = txt.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
-
-      const cpf = normalizeCpf(cpfMatch?.[1] || '');
-      const birthDate = parseDateBRToISO(birthMatch?.[1] || '');
-
-      candidates.push({
-        fullName,
-        cpf: cpf || undefined,
-        birthDate: birthDate || undefined,
-        phone: undefined,
-        email: undefined,
-        raw: txt,
-      });
-    }
-
-    // Deduplicate by CPF (preferred) or name
-    const byKey = new Map<string, Passenger>();
-    for (const p of candidates) {
-      const key = p.cpf ? `cpf:${p.cpf}` : `name:${p.fullName.toUpperCase()}`;
-      if (!byKey.has(key)) byKey.set(key, p);
-    }
-    return Array.from(byKey.values());
-  } catch (_) {
-    return [];
-  }
-}
-
-
-
-
 function parseDateBRToISO(dateBR: string): string | null {
   const m = dateBR.match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/);
   if (!m) return null;
@@ -917,38 +874,41 @@ function normalizeCpf(raw: string): string {
   return digits.length >= 11 ? digits.slice(-11) : digits;
 }
 
+// DOM-based passenger extraction for IDDAS.
+// IMPORTANT: keep a single declaration. Deno Edge Runtime fails to boot if duplicated.
 function extractPassengersFromDom(doc: any): Passenger[] {
   try {
-    const candidates: Passenger[] = [];
-    const passengerEls = Array.from(doc.querySelectorAll('p.fs-6'));
+    const passengerEls = Array.from(doc?.querySelectorAll?.('p.fs-6') || []);
+    const byKey = new Map<string, Passenger>();
+
     for (const el of passengerEls) {
-      const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      const txt = (el?.textContent || '').replace(/\s+/g, ' ').trim();
       if (!/\bCPF\b/i.test(txt)) continue;
 
-      const nameEl = el.querySelector('span.fw-semibold');
-      const name = (nameEl?.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!name) continue;
+      const nameEl = el?.querySelector?.('span.fw-semibold');
+      const fullName = (nameEl?.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!fullName) continue;
 
       const cpfMatch = txt.match(/\bCPF\s*([0-9.\-]{11,})/i);
       const birthMatch = txt.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
 
-      const cpf = normalizeCpf(cpfMatch?.[1] || '');
-      const birthDate = parseDateBRToISO(birthMatch?.[1] || '');
+      const cpf = normalizeCPF(cpfMatch?.[1] || '');
+      const birthDate = birthMatch?.[1] ? (toISODateFromBR(birthMatch[1]) || '') : '';
 
-      candidates.push({
-        name,
-        cpf: cpf || undefined,
-        birthDate: birthDate || undefined,
-        raw: txt,
+      const key = cpf && cpf.length === 11 ? `cpf:${cpf}` : `name:${fullName.toUpperCase()}`;
+      if (byKey.has(key)) continue;
+
+      byKey.set(key, {
+        fullName,
+        birthDate,
+        cpf: cpf && cpf.length === 11 ? cpf : '',
+        phone: '',
+        email: '',
+        passport: '',
+        passportExpiry: '',
       });
     }
 
-    // Deduplicate by CPF (preferred) or name
-    const byKey = new Map<string, Passenger>();
-    for (const p of candidates) {
-      const key = p.cpf ? `cpf:${p.cpf}` : `name:${p.name.toUpperCase()}`;
-      if (!byKey.has(key)) byKey.set(key, p);
-    }
     return Array.from(byKey.values());
   } catch (_) {
     return [];
