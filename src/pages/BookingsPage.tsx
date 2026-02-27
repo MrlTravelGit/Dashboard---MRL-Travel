@@ -310,6 +310,11 @@ export default function BookingsPage() {
       // B) { success: true, suggestedTitle, mainPassengerName, passengers?, flights?, hotels?, cars? }
       const payload: any = (result?.data?.data ?? result?.data) || result || {};
 
+      const debugInfo: any = result?.debug ?? result?.data?.debug ?? payload?.debug;
+      if (debugInfo) {
+        console.warn('[EXTRACT] debug', debugInfo);
+      }
+
       if (import.meta.env.DEV) {
         console.log('[EXTRACT] payload', payload);
       }

@@ -182,6 +182,10 @@ export default function BookingDetailsPage() {
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || "Falha ao importar dados");
 
+      if ((data as any)?.debug) {
+        console.warn('[IMPORT] debug', (data as any).debug);
+      }
+
       const extracted = data.data;
 
       const total = extracted.total ?? null;

@@ -63,6 +63,49 @@ function normalizeText(s: string) {
     .trim();
 }
 
+function maskSensitiveForDebug(s: string): string {
+  let out = s || "";
+
+  // Mask CPF formats like 000.000.000-00
+  out = out.replace(/\b(\d{3})\.(\d{3})\.(\d{3})-(\d{2})\b/g, "***.***.***-$4");
+
+  // Mask raw 11-digit sequences that likely represent CPF
+  out = out.replace(/\b(\d{11})\b/g, (m) => `${m.slice(0, 3)}********`);
+
+  // Mask emails (keep domain)
+  out = out.replace(/[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})/gi, (_m, domain) => `***@${domain}`);
+
+  // Mask phone numbers (keep last 2 digits)
+  out = out.replace(/(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})/g, (m) => {
+    const digits = m.replace(/\D/g, "");
+    if (digits.length < 8) return "***";
+    return `(**) *****-**${digits.slice(-2)}`;
+  });
+
+  return out;
+}
+
+function extractContext(text: string, needles: string[], radius: number): string {
+  const t = text || "";
+  if (!t) return "";
+
+  let idx = -1;
+  for (const n of needles) {
+    const i = t.toLowerCase().indexOf((n || "").toLowerCase());
+    if (i >= 0 && (idx < 0 || i < idx)) idx = i;
+  }
+
+  if (idx < 0) idx = 0;
+
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(t.length, idx + radius);
+
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < t.length ? "..." : "";
+  return prefix + t.slice(start, end) + suffix;
+}
+
+
 // Build a text representation that preserves block boundaries.
 // doc.body.textContent often collapses everything into a single line, making
 // passenger extraction unreliable.
@@ -876,44 +919,194 @@ function normalizeCpf(raw: string): string {
 
 // DOM-based passenger extraction for IDDAS.
 // IMPORTANT: keep a single declaration. Deno Edge Runtime fails to boot if duplicated.
-function extractPassengersFromDom(doc: any): Passenger[] {
+type PassengerDomMeta = {
+  candidates: number;
+  matchedCpf: number;
+  extracted: number;
+  methodCounts: {
+    pFs6: number;
+    pAll: number;
+    iconPerson: number;
+    spanFw: number;
+  };
+  notes: string[];
+};
+
+type PassengerDomResult = { passengers: Passenger[]; meta: PassengerDomMeta };
+
+function extractPassengersFromDomWithMeta(doc: any): PassengerDomResult {
+  const meta: PassengerDomMeta = {
+    candidates: 0,
+    matchedCpf: 0,
+    extracted: 0,
+    methodCounts: { pFs6: 0, pAll: 0, iconPerson: 0, spanFw: 0 },
+    notes: [],
+  };
+
   try {
-    const passengerEls = Array.from(doc?.querySelectorAll?.('p.fs-6') || []);
-    const byKey = new Map<string, Passenger>();
-
-    for (const el of passengerEls) {
-      const txt = (el?.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!/\bCPF\b/i.test(txt)) continue;
-
-      const nameEl = el?.querySelector?.('span.fw-semibold');
-      const fullName = (nameEl?.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!fullName) continue;
-
-      const cpfMatch = txt.match(/\bCPF\s*([0-9.\-]{11,})/i);
-      const birthMatch = txt.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
-
-      const cpf = normalizeCPF(cpfMatch?.[1] || '');
-      const birthDate = birthMatch?.[1] ? (toISODateFromBR(birthMatch[1]) || '') : '';
-
-      const key = cpf && cpf.length === 11 ? `cpf:${cpf}` : `name:${fullName.toUpperCase()}`;
-      if (byKey.has(key)) continue;
-
-      byKey.set(key, {
-        fullName,
-        birthDate,
-        cpf: cpf && cpf.length === 11 ? cpf : '',
-        phone: '',
-        email: '',
-        passport: '',
-        passportExpiry: '',
-      });
+    if (!doc?.querySelectorAll) {
+      meta.notes.push("dom_missing");
+      return { passengers: [], meta };
     }
 
-    return Array.from(byKey.values());
+    const pFs6 = Array.from(doc.querySelectorAll("p.fs-6") || []);
+    const pAll = Array.from(doc.querySelectorAll("p") || []);
+    const iconPerson = Array.from(doc.querySelectorAll("i.bi-person") || []);
+    const spanFw = Array.from(doc.querySelectorAll("span.fw-semibold") || []);
+
+    meta.methodCounts = {
+      pFs6: pFs6.length,
+      pAll: pAll.length,
+      iconPerson: iconPerson.length,
+      spanFw: spanFw.length,
+    };
+
+    const seen = new Set<any>();
+    const candidates: any[] = [];
+
+    const push = (el: any) => {
+      if (!el || seen.has(el)) return;
+      seen.add(el);
+      candidates.push(el);
+    };
+
+    // 1) Most common layout: passenger lines are <p class="fs-6">...</p>
+    for (const el of pFs6) push(el);
+
+    // 2) Generic fallback: any <p> that contains CPF
+    for (const el of pAll) {
+      const txt = (el?.textContent || "").toString();
+      if (/\bCPF\b/i.test(txt)) push(el);
+    }
+
+    // 3) Icon anchor: <i class="bi bi-person">, walk up to find a parent <p> or <li>
+    const closestTag = (node: any, tags: string[]) => {
+      let cur = node;
+      const set = new Set(tags.map((t) => t.toLowerCase()));
+      while (cur && cur.parentElement) {
+        const tag = (cur.tagName || "").toString().toLowerCase();
+        if (set.has(tag)) return cur;
+        cur = cur.parentElement;
+      }
+      return null;
+    };
+
+    for (const icon of iconPerson) {
+      const holder = closestTag(icon, ["p", "li", "div"]);
+      if (holder) push(holder);
+    }
+
+    // 4) Span anchor: <span class="fw-semibold">NAME</span> and parent contains CPF
+    for (const sp of spanFw) {
+      const holder = closestTag(sp, ["p", "li", "div"]);
+      const txt = (holder?.textContent || "").toString();
+      if (holder && /\bCPF\b/i.test(txt)) push(holder);
+    }
+
+    meta.candidates = candidates.length;
+
+    const byKey = new Map<string, Passenger>();
+
+    const normalizeSpaces = (s: string) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+
+    const extractFromTextLine = (txt: string) => {
+      const cleaned = normalizeSpaces(txt);
+      const cpfMatch = cleaned.match(/\bCPF\s*([0-9.\-]{11,})/i);
+      const birthMatch = cleaned.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
+      const phoneMatch = cleaned.match(/(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})/);
+      const emailMatch = cleaned.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+
+      const cpf = normalizeCPF(cpfMatch?.[1] || "");
+      const birthDate = birthMatch?.[1] ? (toISODateFromBR(birthMatch[1]) || "") : "";
+
+      return {
+        cpf: cpf && cpf.length === 11 ? cpf : "",
+        birthDate,
+        phone: phoneMatch?.[1] ? normalizeSpaces(phoneMatch[1]) : "",
+        email: emailMatch?.[0] ? emailMatch[0].trim() : "",
+      };
+    };
+
+    const makeKey = (p: Passenger) => {
+      const cpfDigits = normalizeCPF(p.cpf);
+      if (cpfDigits.length === 11) return `cpf:${cpfDigits}`;
+
+      const name = sanitizePassengerName(p.fullName || "");
+      const birth = (p.birthDate || "").trim();
+      if (name && birth) return `namebirth:${name.toUpperCase()}|${birth}`;
+      if (name) return `name:${name.toUpperCase()}`;
+      return "";
+    };
+
+    for (const el of candidates) {
+      const txtRaw = (el?.textContent || "").toString();
+      const txt = normalizeSpaces(txtRaw);
+
+      // Avoid mixing with other sections: require CPF or (strong name + birth date)
+      const hasCpfWord = /\bCPF\b/i.test(txt);
+      const hasBirth = /\b\d{2}\/\d{2}\/\d{4}\b/.test(txt);
+
+      let fullName = "";
+      const nameEl =
+        el?.querySelector?.("span.fw-semibold") ||
+        el?.querySelector?.("strong") ||
+        null;
+
+      fullName = normalizeSpaces(nameEl?.textContent || "");
+
+      if (!fullName) {
+        // Fallback: first chunk before comma often contains the name
+        const first = normalizeSpaces(txt.split(",")[0] || "");
+        if (isProbablyPersonName(first) && !looksLikeCompanyName(first) && !isLabelName(first)) {
+          fullName = first;
+        }
+      }
+
+      if (!fullName) continue;
+      if (!isProbablyPersonName(fullName) || looksLikeCompanyName(fullName) || isLabelName(fullName)) continue;
+
+      // If it does not contain CPF and does not look like a passenger line, skip
+      if (!hasCpfWord && !hasBirth) continue;
+
+      const extra = extractFromTextLine(txt);
+      if (extra.cpf) meta.matchedCpf += 1;
+
+      const passenger: Passenger = {
+        fullName,
+        birthDate: extra.birthDate,
+        cpf: extra.cpf,
+        phone: extra.phone,
+        email: extra.email,
+        passport: "",
+        passportExpiry: "",
+      };
+
+      const key = makeKey(passenger);
+      if (!key) continue;
+
+      if (byKey.has(key)) continue;
+      byKey.set(key, passenger);
+    }
+
+    const out = Array.from(byKey.values());
+    meta.extracted = out.length;
+
+    if (out.length === 0) {
+      meta.notes.push("no_passengers_from_dom");
+    }
+
+    return { passengers: out, meta };
   } catch (_) {
-    return [];
+    meta.notes.push("dom_exception");
+    return { passengers: [], meta };
   }
 }
+
+// Backwards compatible wrapper
+function extractPassengersFromDom(doc: any): Passenger[] {
+  return extractPassengersFromDomWithMeta(doc).passengers;
+}
+
 
 function matchAllHotelsFromDom(doc: any): ExtractedHotel[] {
   try {
@@ -1101,6 +1294,11 @@ let doc: Document | null = null;
 let passengers: Passenger[] = [];
 let lastStatus = 0;
 
+let lastHtml = "";
+let lastNormalizedFromHtml = "";
+let lastExpectedPassengerCount: number | null = null;
+let lastPassengersDomMeta: PassengerDomMeta | null = null;
+
 for (let attempt = 1; attempt <= 2; attempt++) {
   const r = await fetchHtmlOnce(attempt);
   lastStatus = r.status;
@@ -1116,6 +1314,7 @@ for (let attempt = 1; attempt <= 2; attempt++) {
   }
 
   const html = await r.text();
+  lastHtml = html;
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const rawText = extractTextWithNewlines(parsed) || parsed?.body?.textContent || "";
   const normalized = normalizeText(rawText);
@@ -1123,11 +1322,13 @@ for (let attempt = 1; attempt <= 2; attempt++) {
   // Alternate text extraction directly from raw HTML. Some layouts hide or collapse
   // parts of the passenger block when relying only on textContent.
   const normalizedFromHtml = htmlToText(html);
+  lastNormalizedFromHtml = normalizedFromHtml;
 
   const passengersA = extractPassengers(normalized);
   const passengersB = normalizedFromHtml ? extractPassengers(normalizedFromHtml) : [];
 
   const expectedCount = getExpectedPassengerCount(normalized) ?? getExpectedPassengerCount(normalizedFromHtml);
+  lastExpectedPassengerCount = expectedCount;
 
   const score = (ps: Passenger[]) => {
     const full = ps.filter((p) => (p.fullName || "").trim().split(/\s+/).filter(Boolean).length >= 2).length;
@@ -1144,55 +1345,83 @@ for (let attempt = 1; attempt <= 2; attempt++) {
   }
 
 
-  // DOM-based extraction for IDDAS passenger banner (more reliable for names with suffix like "(BR4)")
-  const passengersDom = extractPassengersFromDom(parsed);
-  if (passengersDom.length) {
-    const merged = new Map<string, Passenger>();
+  // DOM-based extraction for IDDAS passenger banner (more reliable for names and reduces cross-matching)
+  const domResult = extractPassengersFromDomWithMeta(parsed);
+  const passengersDom = domResult.passengers;
+  lastPassengersDomMeta = domResult.meta;
 
-    const upsertMerged = (p: Passenger, source: "text" | "dom") => {
-      const cpfDigits = normalizeCPF(p.cpf);
-      if (cpfDigits.length !== 11) return;
+  const makePassengerKey = (p: Passenger) => {
+    const cpfDigits = normalizeCPF(p.cpf);
+    if (cpfDigits.length === 11) return `cpf:${cpfDigits}`;
 
-      const existing = merged.get(cpfDigits) || { ...p, cpf: cpfDigits };
+    const nm = sanitizePassengerName(p.fullName || "");
+    const bd = (p.birthDate || "").trim();
+    if (nm && bd) return `namebirth:${nm.toUpperCase()}|${bd}`;
+    if (nm) return `name:${nm.toUpperCase()}`;
+    return "";
+  };
 
-      // Name merging rules:
-      // - Always sanitize before comparing.
-      // - Prefer DOM name when it differs (DOM binds name+CPF in the same node and avoids regex cross-matching).
-      const incomingName = sanitizePassengerName(p.fullName || "");
-      const existingName = sanitizePassengerName(existing.fullName || "");
+  const mergedList: Passenger[] = [];
+  const indexByKey = new Map<string, number>();
 
-      const incomingIsValid =
-        !!incomingName &&
-        isProbablyPersonName(incomingName) &&
-        !looksLikeCompanyName(incomingName) &&
-        !isLabelName(incomingName);
+  const upsertMerged = (p: Passenger, source: "text" | "dom") => {
+    const key = makePassengerKey(p);
+    if (!key) return;
 
-      if (incomingIsValid) {
-        const incomingWords = incomingName.split(/\s+/).filter(Boolean).length;
-        const existingWords = existingName ? existingName.split(/\s+/).filter(Boolean).length : 0;
+    const idx = indexByKey.get(key);
+    const existing = idx === undefined ? null : mergedList[idx];
 
-        const shouldReplaceName =
-          source === "dom"
-            ? (incomingWords >= 2 && incomingName !== existingName)
-            : (!existingName || !isProbablyPersonName(existingName) || incomingWords > existingWords);
+    const cpfDigits = normalizeCPF(p.cpf);
+    const incomingCpf = cpfDigits.length === 11 ? cpfDigits : "";
 
-        if (shouldReplaceName) existing.fullName = incomingName;
-      }
+    const incomingName = sanitizePassengerName(p.fullName || "");
+    const incomingNameIsValid =
+      !!incomingName &&
+      isProbablyPersonName(incomingName) &&
+      !looksLikeCompanyName(incomingName) &&
+      !isLabelName(incomingName);
 
-      if (!existing.birthDate && p.birthDate) existing.birthDate = p.birthDate;
-      if (!existing.phone && p.phone) existing.phone = p.phone;
-      if (!existing.email && p.email) existing.email = p.email;
-      if (!existing.passport && p.passport) existing.passport = p.passport;
-      if (!existing.passportExpiry && p.passportExpiry) existing.passportExpiry = p.passportExpiry;
+    if (!existing) {
+      mergedList.push({
+        fullName: incomingNameIsValid ? incomingName : (p.fullName || ""),
+        birthDate: p.birthDate || "",
+        cpf: incomingCpf || "",
+        phone: p.phone || "",
+        email: p.email || "",
+        passport: p.passport || "",
+        passportExpiry: p.passportExpiry || "",
+      });
+      indexByKey.set(key, mergedList.length - 1);
+      return;
+    }
 
-      merged.set(cpfDigits, existing);
-    };
+    const existingName = sanitizePassengerName(existing.fullName || "");
+    const existingWords = existingName ? existingName.split(/\s+/).filter(Boolean).length : 0;
+    const incomingWords = incomingName ? incomingName.split(/\s+/).filter(Boolean).length : 0;
 
-    for (const p of extractedPassengers) upsertMerged(p, "text");
-    for (const p of passengersDom) upsertMerged(p, "dom");
+    if (incomingNameIsValid) {
+      const shouldReplaceName =
+        source === "dom"
+          ? (incomingWords >= 2 && incomingName !== existingName)
+          : (!existingName || !isProbablyPersonName(existingName) || incomingWords > existingWords);
 
-    extractedPassengers = Array.from(merged.values());
-  }
+      if (shouldReplaceName) existing.fullName = incomingName;
+    }
+
+    if (!existing.birthDate && p.birthDate) existing.birthDate = p.birthDate;
+    if (!existing.cpf && incomingCpf) existing.cpf = incomingCpf;
+    if (!existing.phone && p.phone) existing.phone = p.phone;
+    if (!existing.email && p.email) existing.email = p.email;
+    if (!existing.passport && p.passport) existing.passport = p.passport;
+    if (!existing.passportExpiry && p.passportExpiry) existing.passportExpiry = p.passportExpiry;
+  };
+
+  // Prefer DOM order first, then fill gaps from text extraction
+  for (const p of passengersDom) upsertMerged(p, "dom");
+  for (const p of extractedPassengers) upsertMerged(p, "text");
+
+  if (mergedList.length) extractedPassengers = mergedList;
+
 
   // Retry when the HTML is likely incomplete (happens with aggressive caching)
   const shouldRetry =
@@ -1351,10 +1580,36 @@ const reservedBy = extractReservedBy(pageText);
       cars,
     };
 
+    const shouldIncludeDebug =
+      passengersOut.length === 0 ||
+      passengersOut.some((p) => !isProbablyPersonName(p.name || "")) ||
+      (lastExpectedPassengerCount !== null && passengersOut.length < lastExpectedPassengerCount);
+
+    const debugOut = shouldIncludeDebug
+      ? {
+          lastStatus,
+          expectedPassengerCount: lastExpectedPassengerCount,
+          domMeta: lastPassengersDomMeta,
+          counts: {
+            passengersMerged: passengersOut.length,
+            htmlLength: lastHtml.length,
+            normalizedTextLength: pageText.length,
+            normalizedFromHtmlLength: lastNormalizedFromHtml.length,
+          },
+          htmlContext: maskSensitiveForDebug(
+            extractContext(lastHtml, ["Passageiros", "bi-person", "fw-semibold", "Reservado por", "CPF"], 1400),
+          ),
+          textContext: maskSensitiveForDebug(
+            extractContext(pageText, ["Reservado por", "Passageiros", "CPF"], 1400),
+          ),
+        }
+      : undefined;
+
     return new Response(
       JSON.stringify({
         success: true,
         data: dataOut,
+        ...(debugOut ? { debug: debugOut } : {}),
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
