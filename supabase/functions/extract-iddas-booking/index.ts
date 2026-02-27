@@ -1196,8 +1196,11 @@ const reservedBy = extractReservedBy(pageText);
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
     
     const flights = matchAllFlights(pageText, mainPassengerName);
+    // hotelsDom existed in some older revisions; keep it as an empty array here
+    // to avoid runtime crashes when only the text-based extractor is used.
+    const hotelsDom: ExtractedHotel[] = [];
     const hotelsText = matchAllHotels(pageText) || [];
-    const hotelsMerged = [...(hotelsDom || []), ...hotelsText];
+    const hotelsMerged = [...hotelsDom, ...hotelsText];
 
     const hotelSeen = new Set<string>();
     const hotels: ExtractedHotel[] = [];
