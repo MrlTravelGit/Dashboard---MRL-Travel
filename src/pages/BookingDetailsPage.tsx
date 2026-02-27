@@ -11,6 +11,7 @@ import { Loader2, ArrowLeft, ExternalLink } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { invokeWithAuth } from "@/integrations/supabase/invokeWithAuth";
 
 type BookingRow = {
   id: string;
@@ -170,14 +171,13 @@ export default function BookingDetailsPage() {
 
     setImporting(true);
     try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData.session?.access_token;
-    const authHeader = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+      const url = booking.source_url;
+      const isIddasLink = /agencia\.iddas\.com\.br\/reserva\//i.test(url);
+      const functionName = isIddasLink ? "extract-iddas-booking" : "extract-booking-from-link";
 
-    const { data, error } = await supabase.functions.invoke("extract-booking-from-link", {
-      body: { url: booking.source_url },
-      headers: authHeader,
-    });
+      const { data, error } = await invokeWithAuth(functionName, {
+        body: { url },
+      });
 
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || "Falha ao importar dados");

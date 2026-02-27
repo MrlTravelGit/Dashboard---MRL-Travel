@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 import {
-  corsHeaders,
   fetchPageText,
   extractPassengers,
   extractMainPassengerName,
@@ -36,8 +36,9 @@ function buildSuggestedTitle(flights: any[], hotels: any[]) {
 }
 
 serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {

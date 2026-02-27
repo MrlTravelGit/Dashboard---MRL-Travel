@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 
 type Body = {
   name: string;
@@ -8,13 +9,7 @@ type Body = {
   password?: string | null;
 };
 
-const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function json(status: number, payload: unknown) {
+function json(corsHeaders: Record<string, string>, status: number, payload: unknown) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -27,12 +22,13 @@ function getEnv(name: string): string | undefined {
 }
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   if (req.method !== "POST") {
-    return json(405, { code: 405, message: "Method not allowed" });
+    return json(corsHeaders, 405, { code: 405, message: "Method not allowed" });
   }
 
   try {
@@ -60,13 +56,13 @@ Deno.serve(async (req) => {
         SERVICE_ROLE_KEY: !!SERVICE_ROLE_KEY,
         SUPABASE_ANON_KEY: !!SUPABASE_ANON_KEY,
       });
-      return json(500, { code: 500, message: "Missing env vars" });
+      return json(corsHeaders, 500, { code: 500, message: "Missing env vars" });
     }
 
     // Authorization
     const authHeader = req.headers.get("authorization") || req.headers.get("Authorization") || "";
     if (!authHeader.startsWith("Bearer ")) {
-      return json(401, { code: 401, message: "Missing Authorization" });
+      return json(corsHeaders, 401, { code: 401, message: "Missing Authorization" });
     }
 
     // Validate JWT (anon client with forwarded auth header)
@@ -77,7 +73,7 @@ Deno.serve(async (req) => {
     const { data: userData, error: userError } = await supabaseAnon.auth.getUser();
     if (userError || !userData?.user?.id) {
       console.error("Invalid JWT", userError);
-      return json(401, { code: 401, message: "Invalid JWT" });
+      return json(corsHeaders, 401, { code: 401, message: "Invalid JWT" });
     }
     const callerUserId = userData.user.id;
 
@@ -90,11 +86,11 @@ Deno.serve(async (req) => {
 
     if (adminErr) {
       console.error("Admin check error", adminErr);
-      return json(500, { code: 500, message: "Admin check failed" });
+      return json(corsHeaders, 500, { code: 500, message: "Admin check failed" });
     }
 
     if (!adminRow) {
-      return json(403, { code: 403, message: "Not admin" });
+      return json(corsHeaders, 403, { code: 403, message: "Not admin" });
     }
 
     // Parse and validate payload
@@ -102,7 +98,7 @@ Deno.serve(async (req) => {
     try {
       body = (await req.json()) as Body;
     } catch {
-      return json(400, { code: 400, message: "Invalid JSON body" });
+      return json(corsHeaders, 400, { code: 400, message: "Invalid JSON body" });
     }
 
     const name = (body?.name || "").trim();
@@ -114,9 +110,9 @@ Deno.serve(async (req) => {
         : 30;
     const password = body?.password && body.password.trim() ? body.password.trim() : null;
 
-    if (!name) return json(400, { code: 400, message: "Missing name" });
-    if (!cnpj) return json(400, { code: 400, message: "Missing cnpj" });
-    if (!email) return json(400, { code: 400, message: "Missing email" });
+    if (!name) return json(corsHeaders, 400, { code: 400, message: "Missing name" });
+    if (!cnpj) return json(corsHeaders, 400, { code: 400, message: "Missing cnpj" });
+    if (!email) return json(corsHeaders, 400, { code: 400, message: "Missing email" });
 
     // Service role client
     const adminClient = createClient(PROJECT_URL, SERVICE_ROLE_KEY);
@@ -136,7 +132,7 @@ Deno.serve(async (req) => {
 
     if (companyErr || !company?.id) {
       console.error("Company creation error", companyErr);
-      return json(500, {
+      return json(corsHeaders, 500, {
         code: 500,
         message: "Failed to create company",
         context: companyErr?.message,
@@ -152,7 +148,7 @@ Deno.serve(async (req) => {
 
     if (createUserResult.error || !createUserResult.data?.user?.id) {
       console.error("User creation error", createUserResult.error);
-      return json(500, {
+      return json(corsHeaders, 500, {
         code: 500,
         message: "Failed to create user",
         context: createUserResult.error?.message,
@@ -172,20 +168,20 @@ Deno.serve(async (req) => {
 
     if (linkErr) {
       console.error("Link user error", linkErr);
-      return json(500, {
+      return json(corsHeaders, 500, {
         code: 500,
         message: "Failed to link user to company",
         context: linkErr.message,
       });
     }
 
-    return json(200, {
+    return json(corsHeaders, 200, {
       success: true,
       company: { id: company.id, name: company.name },
       user: { id: newUserId, email },
     });
   } catch (e) {
     console.error("Unexpected error", e);
-    return json(500, { code: 500, message: "Unexpected error", context: (e as any)?.message });
+    return json(corsHeaders, 500, { code: 500, message: "Unexpected error", context: (e as any)?.message });
   }
 });

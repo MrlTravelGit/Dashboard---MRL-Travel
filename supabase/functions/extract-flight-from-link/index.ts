@@ -1,15 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 
 Deno.serve(async (req) => {
   try {
+    const corsHeaders = buildCorsHeaders(req);
     if (req.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
-        },
+        headers: corsHeaders,
       });
     }
 
@@ -18,10 +16,7 @@ Deno.serve(async (req) => {
     if (!url || typeof url !== "string") {
       return new Response(JSON.stringify({ error: "URL inválida" }), {
         status: 400,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -36,10 +31,7 @@ Deno.serve(async (req) => {
     if (!token) {
       return new Response(JSON.stringify({ error: "Missing Authorization Bearer token" }), {
         status: 401,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -55,10 +47,7 @@ Deno.serve(async (req) => {
     if (userErr || !userData?.user?.id) {
       return new Response(JSON.stringify({ error: "Invalid JWT" }), {
         status: 401,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -73,20 +62,14 @@ Deno.serve(async (req) => {
     if (cuErr) {
       return new Response(JSON.stringify({ error: cuErr.message }), {
         status: 400,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     if (!cu?.company_id) {
       return new Response(JSON.stringify({ error: "Usuário não vinculado a uma empresa" }), {
         status: 403,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -103,27 +86,18 @@ Deno.serve(async (req) => {
     if (insErr) {
       return new Response(JSON.stringify({ error: insErr.message }), {
         status: 400,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     return new Response(JSON.stringify({ ok: true, booking }), {
       status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Erro interno" }), {
       status: 500,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
+      headers: { ...buildCorsHeaders(req), "Content-Type": "application/json" },
     });
   }
 });

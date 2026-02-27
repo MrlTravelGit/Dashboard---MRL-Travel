@@ -3,12 +3,7 @@
 // Auth: requires a valid user JWT and that the caller is an admin (admin_users).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { buildCorsHeaders } from "../_shared/cors.ts";
 
 type Passenger = {
   name?: string;
@@ -32,8 +27,9 @@ const toIsoDate = (raw?: any): string | null => {
 };
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
