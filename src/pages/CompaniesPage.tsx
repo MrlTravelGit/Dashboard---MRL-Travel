@@ -7,10 +7,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Plus, Search, Building2, Trash2, Loader2, Upload, X, Pencil } from 'lucide-react';
+import { Plus, Search, Building2, Trash2, Loader2, Upload, X, Pencil, KeyRound } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeWithAuth } from '@/integrations/supabase/invokeWithAuth';
 import { Company } from '@/types/booking';
 
 interface CompanyWithLogo extends Company {
@@ -33,6 +34,15 @@ export default function CompaniesPage() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ password: '', confirm: '' });
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [accessForm, setAccessForm] = useState({
+    companyId: '',
+    email: '',
+    password: '',
+    confirm: '',
+  });
+  const [isCreatingAccess, setIsCreatingAccess] = useState(false);
   
   const [formData, setFormData] = useState({
     name: '',
@@ -74,7 +84,7 @@ export default function CompaniesPage() {
 
     setIsChangingPassword(true);
     try {
-      const { data, error } = await supabase.functions.invoke('company-set-password', {
+      const { data, error } = await invokeWithAuth('company-set-password', {
         body: { company_id: editingCompany.id, new_password: password },
       });
 
@@ -96,6 +106,101 @@ export default function CompaniesPage() {
         variant: 'destructive',
       });
       setIsChangingPassword(false);
+    }
+  };
+
+  const resetAccessModal = () => {
+    setAccessForm({ companyId: '', email: '', password: '', confirm: '' });
+    setAccessOpen(false);
+    setIsCreatingAccess(false);
+  };
+
+  const openAccessForCompany = (company: CompanyWithLogo) => {
+    setAccessForm({
+      companyId: company.id,
+      email: company.email || '',
+      password: '',
+      confirm: '',
+    });
+    setAccessOpen(true);
+  };
+
+  const handleCreateAccess = async () => {
+    const companyId = accessForm.companyId;
+    const email = accessForm.email.trim().toLowerCase();
+    const password = accessForm.password.trim();
+    const confirm = accessForm.confirm.trim();
+
+    if (!companyId) {
+      toast({
+        title: 'Selecione a empresa',
+        description: 'Escolha a empresa que receberá o acesso.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!email) {
+      toast({
+        title: 'E-mail inválido',
+        description: 'Informe um e-mail válido para o acesso.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (password) {
+      if (password.length < 6) {
+        toast({
+          title: 'Senha inválida',
+          description: 'A senha deve ter no mínimo 6 caracteres.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      if (password !== confirm) {
+        toast({
+          title: 'Senhas não conferem',
+          description: 'Digite a mesma senha nos dois campos.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
+    setIsCreatingAccess(true);
+    try {
+      const { data, error } = await invokeWithAuth('company-create-access', {
+        body: {
+          company_id: companyId,
+          email,
+          password: password ? password : null,
+          update_company_email: true,
+          role: 'user',
+        },
+      });
+
+      if (error) throw error;
+      if (!data?.success) {
+        throw new Error((data as any)?.message || (data as any)?.error || 'Não foi possível criar o acesso.');
+      }
+
+      toast({
+        title: 'Acesso criado',
+        description: password
+          ? 'O e-mail e senha foram cadastrados e vinculados à empresa.'
+          : 'Convite enviado por e-mail e vínculo criado para a empresa.',
+      });
+      resetAccessModal();
+      fetchCompanies();
+    } catch (e: any) {
+      console.error('Error creating access:', e);
+      toast({
+        title: 'Erro ao criar acesso',
+        description: e?.message || 'Não foi possível criar o acesso para a empresa.',
+        variant: 'destructive',
+      });
+      setIsCreatingAccess(false);
     }
   };
 
@@ -239,44 +344,33 @@ export default function CompaniesPage() {
           description: `A empresa "${formData.name}" foi atualizada com sucesso.`,
         });
       } else {
-        // NOVO: Valida sessão ANTES do invoke
+        // Novo fluxo: cria apenas o registro da empresa em public.companies.
+        // O acesso (Auth + company_users) é criado separadamente no botão "Criar Acesso".
         const { data: sess } = await supabase.auth.getSession();
-        if (!sess?.session) {
-          toast({ title: 'Sessão expirada, faça login novamente.' });
-          setIsSubmitting(false);
-          return;
+        const callerUserId = sess?.session?.user?.id ?? null;
+
+        const payment_deadline_days = parseInt(formData.paymentDeadlineDays) || 30;
+        const { data: companyData, error: insertErr } = await supabase
+          .from('companies')
+          .insert({
+            name: formData.name,
+            cnpj: formData.cnpj,
+            email: formData.email,
+            payment_deadline_days,
+            created_by: callerUserId,
+          } as any)
+          .select('*')
+          .single();
+
+        if (insertErr || !companyData?.id) {
+          throw insertErr || new Error('Não foi possível criar a empresa.');
         }
-        const payload = {
-          name: formData.name,
-          cnpj: formData.cnpj,
-          email: formData.email,
-          payment_deadline_days: parseInt(formData.paymentDeadlineDays) || 30,
-          password: formData.password?.trim() ? formData.password.trim() : null,
-        };
-        // Chama SOMENTE invoke
-        const { data: fnData, error: fnErr } = await supabase.functions.invoke('company-create-with-user', {
-          body: payload,
-        });
-        if (fnErr) {
-          console.error('company-create-with-user', fnErr);
-          toast({ title: fnErr.message || 'Erro ao cadastrar empresa', variant: 'destructive' });
-          setIsSubmitting(false);
-          return;
-        }
-        const companyData = (fnData as any)?.company;
-        if (!companyData?.id) {
-          toast({ title: 'Não foi possível criar a empresa.' });
-          setIsSubmitting(false);
-          return;
-        }
+
         // Upload logo se necessário
-        if (logoFile && companyData) {
+        if (logoFile) {
           const logoUrl = await uploadLogo(companyData.id);
           if (logoUrl) {
-            await supabase
-              .from('companies')
-              .update({ logo_url: logoUrl })
-              .eq('id', companyData.id);
+            await supabase.from('companies').update({ logo_url: logoUrl }).eq('id', companyData.id);
           }
         }
         toast({
@@ -370,23 +464,35 @@ export default function CompaniesPage() {
             <h2 className="text-2xl font-bold text-foreground">Empresas</h2>
             <p className="text-muted-foreground">Gerencie as empresas cadastradas no sistema</p>
           </div>
-          
-          <Dialog open={open} onOpenChange={(o) => {
-            setOpen(o);
-            if (!o) {
-              setEditingCompany(null);
-              setFormData({ name: '', cnpj: '', email: '', password: '', paymentDeadlineDays: '30' });
-              setLogoFile(null);
-              setLogoPreview(null);
-            }
-          }}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                Nova Empresa
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-md">
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setAccessForm({ companyId: '', email: '', password: '', confirm: '' });
+                setAccessOpen(true);
+              }}
+            >
+              <KeyRound className="h-4 w-4 mr-2" />
+              Criar Acesso
+            </Button>
+
+            <Dialog open={open} onOpenChange={(o) => {
+              setOpen(o);
+              if (!o) {
+                setEditingCompany(null);
+                setFormData({ name: '', cnpj: '', email: '', password: '', paymentDeadlineDays: '30' });
+                setLogoFile(null);
+                setLogoPreview(null);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Nova Empresa
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>{editingCompany ? 'Editar Empresa' : 'Cadastrar Empresa'}</DialogTitle>
               </DialogHeader>
@@ -495,19 +601,9 @@ export default function CompaniesPage() {
                 )}
 
                 {!editingCompany && (
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Senha de Acesso</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      placeholder="Senha para login"
-                      minLength={6}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Se deixar em branco, o sistema envia um convite por e-mail para a empresa definir a senha.
-                    </p>
+                  <div className="rounded-md border border-muted p-3 text-xs text-muted-foreground">
+                    O cadastro da empresa cria apenas o registro em "Empresas". Para criar o login (e-mail e senha) e
+                    vincular à empresa, use o botão "Criar Acesso" nesta tela.
                   </div>
                 )}
 
@@ -590,9 +686,98 @@ export default function CompaniesPage() {
                   </div>
                 </DialogContent>
               </Dialog>
-            </DialogContent>
-          </Dialog>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
+
+        <Dialog open={accessOpen} onOpenChange={(o) => {
+          setAccessOpen(o);
+          if (!o) resetAccessModal();
+        }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Criar acesso para empresa</DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Empresa *</Label>
+                <select
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={accessForm.companyId}
+                  onChange={(e) => {
+                    const companyId = e.target.value;
+                    const selected = companies.find((c) => c.id === companyId);
+                    setAccessForm((prev) => ({
+                      ...prev,
+                      companyId,
+                      email: selected?.email || prev.email,
+                    }));
+                  }}
+                >
+                  <option value="">Selecione...</option>
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="access-email">E-mail *</Label>
+                <Input
+                  id="access-email"
+                  type="email"
+                  value={accessForm.email}
+                  onChange={(e) => setAccessForm((p) => ({ ...p, email: e.target.value }))}
+                  placeholder="usuario@empresa.com"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="access-password">Senha (opcional)</Label>
+                <Input
+                  id="access-password"
+                  type="password"
+                  value={accessForm.password}
+                  onChange={(e) => setAccessForm((p) => ({ ...p, password: e.target.value }))}
+                  placeholder="Mínimo 6 caracteres"
+                  minLength={6}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Se deixar em branco, o sistema envia um convite por e-mail para o usuário definir a senha.
+                </p>
+              </div>
+
+              {!!accessForm.password && (
+                <div className="space-y-2">
+                  <Label htmlFor="access-confirm">Confirmar senha</Label>
+                  <Input
+                    id="access-confirm"
+                    type="password"
+                    value={accessForm.confirm}
+                    onChange={(e) => setAccessForm((p) => ({ ...p, confirm: e.target.value }))}
+                    placeholder="Repita a senha"
+                    minLength={6}
+                  />
+                </div>
+              )}
+
+              <Button className="w-full" onClick={handleCreateAccess} disabled={isCreatingAccess}>
+                {isCreatingAccess ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Criando...
+                  </>
+                ) : (
+                  'Criar acesso'
+                )}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -651,6 +836,14 @@ export default function CompaniesPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openAccessForCompany(company)}
+                            title="Criar acesso"
+                          >
+                            <KeyRound className="h-4 w-4" />
+                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"
