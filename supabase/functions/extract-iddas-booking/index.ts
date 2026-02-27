@@ -333,7 +333,21 @@ function cleanSpacesLoose(s: string) {
 // Remove tags like "(BR4BET)" at the end of a passenger name
 function sanitizePassengerName(name: string) {
   let n = cleanSpacesLoose(name);
+
+  // Remove trailing tags like "(BR4BET)"
   n = n.replace(/\s*\(([A-Z0-9]{2,12})\)\s*$/i, "").trim();
+
+  // Remove leading passenger-type labels that sometimes get concatenated to the name
+  n = n.replace(/^(adultos?|adulto|crianças?|criancas?|criança|crianca|bebês?|bebes?|bebê|bebe|infantes?|infante)\s*[:\-]?\s+/i, "");
+
+  // Remove leading email or domain fragments that may leak from parsing
+  n = n.replace(/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\s+/i, "");
+  n = n.replace(/^[a-z0-9.-]+\.(?:com|com\.br|net|org|br|io|gov)\s+/i, "");
+
+  // Remove any embedded email token (keep email in its own field)
+  n = n.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "");
+
+  n = cleanSpacesLoose(n);
   return n;
 }
 
