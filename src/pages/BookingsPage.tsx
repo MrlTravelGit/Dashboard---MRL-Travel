@@ -719,15 +719,43 @@ export default function BookingsPage() {
           const payload = Array.from(unique.values());
 
           if (payload.length > 0) {
-            const { data: upserted, error: empErr } = await supabase
-              .from('employees')
-              .upsert(payload, { onConflict: 'company_id,cpf' })
-              .select('id');
+            // Não usamos upsert/onConflict aqui, pois o banco pode não ter UNIQUE(company_id, cpf).
+            // Estratégia: busca existentes e insere apenas os que faltam.
+            const sanitized = payload
+              .map((p) => ({
+                ...p,
+                // alguns schemas deixam phone NOT NULL, então garantimos string
+                phone: (p.phone ?? '').toString(),
+              }))
+              // birth_date pode ser obrigatório no schema. Se não tiver, pula para não quebrar o insert.
+              .filter((p) => !!p.cpf && !!p.full_name && !!p.birth_date);
 
-            if (empErr) throw empErr;
-            employeesCreated = upserted?.length ?? 0;
-          }
-        } catch (e: any) {
+            const cpfs = sanitized.map((p) => normalizeCpfDigits(p.cpf));
+            const uniqueCpfs = Array.from(new Set(cpfs)).filter((c) => c.length === 11);
+
+            if (uniqueCpfs.length > 0) {
+              const { data: existing, error: existingErr } = await supabase
+                .from('employees')
+                .select('id, cpf')
+                .eq('company_id', formData.companyId)
+                .in('cpf', uniqueCpfs);
+
+              if (existingErr) throw existingErr;
+
+              const existingSet = new Set((existing || []).map((e: any) => normalizeCpfDigits(e.cpf)));
+              const toInsert = sanitized.filter((p) => !existingSet.has(normalizeCpfDigits(p.cpf)));
+
+              if (toInsert.length > 0) {
+                const { data: inserted, error: insErr } = await supabase
+                  .from('employees')
+                  .insert(toInsert)
+                  .select('id');
+
+                if (insErr) throw insErr;
+                employeesCreated = inserted?.length ?? 0;
+              }
+            }
+          }} catch (e: any) {
           console.warn('employees upsert error:', e);
           toast({
             title: 'Erro ao cadastrar funcionários',

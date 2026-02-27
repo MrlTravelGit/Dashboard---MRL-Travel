@@ -1148,22 +1148,48 @@ for (let attempt = 1; attempt <= 2; attempt++) {
   const passengersDom = extractPassengersFromDom(parsed);
   if (passengersDom.length) {
     const merged = new Map<string, Passenger>();
-    const upsertMerged = (p: Passenger) => {
+
+    const upsertMerged = (p: Passenger, source: "text" | "dom") => {
       const cpfDigits = normalizeCPF(p.cpf);
       if (cpfDigits.length !== 11) return;
+
       const existing = merged.get(cpfDigits) || { ...p, cpf: cpfDigits };
+
+      // Name merging rules:
+      // - Always sanitize before comparing.
+      // - Prefer DOM name when it differs (DOM binds name+CPF in the same node and avoids regex cross-matching).
       const incomingName = sanitizePassengerName(p.fullName || "");
-      if (incomingName && (!existing.fullName || !isProbablyPersonName(existing.fullName))) {
-        existing.fullName = incomingName;
+      const existingName = sanitizePassengerName(existing.fullName || "");
+
+      const incomingIsValid =
+        !!incomingName &&
+        isProbablyPersonName(incomingName) &&
+        !looksLikeCompanyName(incomingName) &&
+        !isLabelName(incomingName);
+
+      if (incomingIsValid) {
+        const incomingWords = incomingName.split(/\s+/).filter(Boolean).length;
+        const existingWords = existingName ? existingName.split(/\s+/).filter(Boolean).length : 0;
+
+        const shouldReplaceName =
+          source === "dom"
+            ? (incomingWords >= 2 && incomingName !== existingName)
+            : (!existingName || !isProbablyPersonName(existingName) || incomingWords > existingWords);
+
+        if (shouldReplaceName) existing.fullName = incomingName;
       }
+
       if (!existing.birthDate && p.birthDate) existing.birthDate = p.birthDate;
       if (!existing.phone && p.phone) existing.phone = p.phone;
       if (!existing.email && p.email) existing.email = p.email;
+      if (!existing.passport && p.passport) existing.passport = p.passport;
+      if (!existing.passportExpiry && p.passportExpiry) existing.passportExpiry = p.passportExpiry;
+
       merged.set(cpfDigits, existing);
     };
 
-    for (const p of extractedPassengers) upsertMerged(p);
-    for (const p of passengersDom) upsertMerged(p);
+    for (const p of extractedPassengers) upsertMerged(p, "text");
+    for (const p of passengersDom) upsertMerged(p, "dom");
 
     extractedPassengers = Array.from(merged.values());
   }
