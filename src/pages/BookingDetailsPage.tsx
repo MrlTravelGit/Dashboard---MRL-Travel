@@ -38,6 +38,8 @@ export default function BookingDetailsPage() {
   const [importing, setImporting] = useState(false);
   const [booking, setBooking] = useState<BookingRow | null>(null);
 
+  const [registeringEmployees, setRegisteringEmployees] = useState(false);
+
   const [form, setForm] = useState({
     name: "",
     totalPaid: "",
@@ -245,6 +247,193 @@ export default function BookingDetailsPage() {
     }
   };
 
+
+  const handleRegisterEmployeesFromBooking = async () => {
+    if (!booking) return;
+
+    setRegisteringEmployees(true);
+
+    try {
+      const companyId = booking.company_id;
+      const passengers = Array.isArray(booking.passengers) ? booking.passengers : [];
+
+      const { data: userRes } = await supabase.auth.getUser();
+      const createdBy = userRes?.user?.id ?? null;
+
+      const normalizeCpfDigits = (v: any) => String(v || '').replace(/\D/g, '');
+
+      const toISODate = (value: any): string | null => {
+        if (!value) return null;
+        const raw = String(value).trim();
+        if (!raw) return null;
+
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+        const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (m) {
+          const dd = m[1];
+          const mm = m[2];
+          const yyyy = m[3];
+          return `${yyyy}-${mm}-${dd}`;
+        }
+
+        const d = new Date(raw);
+        if (Number.isNaN(d.getTime())) return null;
+        return d.toISOString().slice(0, 10);
+      };
+
+      const unique = new Map<string, any>();
+      let skippedMissing = 0;
+
+      for (const p of passengers) {
+        const cpf = normalizeCpfDigits((p as any)?.cpf);
+        const full_name = String((p as any)?.name || (p as any)?.full_name || (p as any)?.fullName || '').trim();
+        const birth_date = toISODate((p as any)?.birth_date || (p as any)?.birthDate || (p as any)?.nasc);
+        const phoneRaw = String((p as any)?.phone || (p as any)?.tel || '').trim();
+        const email = String((p as any)?.email || '').trim() || null;
+        const passport = String((p as any)?.passport || '').trim() || null;
+        const passport_expiry = toISODate((p as any)?.passport_expiry || (p as any)?.passportExpiry);
+
+        if (!cpf || cpf.length !== 11 || !full_name || !birth_date) {
+          skippedMissing += 1;
+          continue;
+        }
+
+        const key = `${companyId}:${cpf}`;
+        const base = {
+          company_id: companyId,
+          cpf,
+          full_name,
+          birth_date,
+          phone: (phoneRaw || '').toString(),
+          email,
+          passport,
+          passport_expiry,
+          created_by: createdBy,
+        };
+
+        if (!unique.has(key)) {
+          unique.set(key, base);
+        } else {
+          const prev = unique.get(key);
+          if (!prev.phone && base.phone) prev.phone = base.phone;
+          if (!prev.email && base.email) prev.email = base.email;
+          if (!prev.passport && base.passport) prev.passport = base.passport;
+          if (!prev.passport_expiry && base.passport_expiry) prev.passport_expiry = base.passport_expiry;
+          if (base.full_name) prev.full_name = base.full_name;
+        }
+      }
+
+      const payload = Array.from(unique.values());
+
+      if (payload.length === 0) {
+        toast({
+          title: 'Nada para cadastrar',
+          description: skippedMissing
+            ? `Nenhum passageiro elegível. ${skippedMissing} item(ns) foi(ram) ignorado(s) por falta de CPF, nome ou nascimento.`
+            : 'Nenhum passageiro elegível encontrado nesta reserva.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const cpfList = payload.map((x) => normalizeCpfDigits(x.cpf));
+
+      const { data: existing, error: existingErr } = await supabase
+        .from('employees')
+        .select('id, cpf, full_name, birth_date, phone, email, passport, passport_expiry')
+        .eq('company_id', companyId)
+        .in('cpf', cpfList);
+
+      if (existingErr) throw existingErr;
+
+      const existingMap = new Map<string, any>();
+      for (const e of existing || []) {
+        existingMap.set(normalizeCpfDigits((e as any)?.cpf), e);
+      }
+
+      const toInsert: any[] = [];
+      const toUpdate: any[] = [];
+
+      for (const row of payload) {
+        const cpf = normalizeCpfDigits(row.cpf);
+        const found = existingMap.get(cpf);
+
+        if (!found) {
+          toInsert.push(row);
+          continue;
+        }
+
+        const patch: any = {};
+
+        const existingName = String((found as any)?.full_name || '').trim();
+        if (
+          row.full_name &&
+          (
+            !existingName ||
+            /@|hotmail\.com|gmail\.com/i.test(existingName) ||
+            /^crian[cç]a\s+/i.test(existingName)
+          )
+        ) {
+          patch.full_name = row.full_name;
+        }
+
+        if (!(found as any)?.birth_date && row.birth_date) patch.birth_date = row.birth_date;
+        if ((!((found as any)?.phone || '').toString().trim()) && row.phone) patch.phone = row.phone;
+        if (!(found as any)?.email && row.email) patch.email = row.email;
+        if (!(found as any)?.passport && row.passport) patch.passport = row.passport;
+        if (!(found as any)?.passport_expiry && row.passport_expiry) patch.passport_expiry = row.passport_expiry;
+
+        if (Object.keys(patch).length > 0) {
+          toUpdate.push({ id: (found as any).id, patch });
+        }
+      }
+
+      let insertedCount = 0;
+      let updatedCount = 0;
+      const alreadyCount = payload.length - toInsert.length;
+
+      if (toInsert.length > 0) {
+        const { data: inserted, error: insErr } = await supabase
+          .from('employees')
+          .insert(toInsert)
+          .select('id');
+
+        if (insErr) throw insErr;
+        insertedCount = inserted?.length ?? 0;
+      }
+
+      for (const u of toUpdate) {
+        const { error: updErr } = await supabase
+          .from('employees')
+          .update(u.patch)
+          .eq('id', u.id);
+
+        if (updErr) throw updErr;
+        updatedCount += 1;
+      }
+
+      const parts: string[] = [];
+      if (insertedCount > 0) parts.push(`${insertedCount} cadastrado(s)`);
+      if (updatedCount > 0) parts.push(`${updatedCount} atualizado(s)`);
+      if (alreadyCount > 0) parts.push(`${alreadyCount} já existia(m)`);
+      if (skippedMissing > 0) parts.push(`${skippedMissing} ignorado(s) por falta de dados`);
+
+      toast({
+        title: 'Funcionários processados',
+        description: parts.length ? `${parts.join('. ')}.` : 'Nenhuma alteração necessária.',
+      });
+    } catch (e: any) {
+      console.error(e);
+      toast({
+        title: 'Erro ao cadastrar funcionários',
+        description: e?.message || 'Não foi possível cadastrar funcionários desta reserva.',
+        variant: 'destructive',
+      });
+    } finally {
+      setRegisteringEmployees(false);
+    }
+  };
   return (
     <DashboardLayout>
       <div className="space-y-4">
@@ -372,8 +561,25 @@ export default function BookingDetailsPage() {
               {/* Passengers Section (from booking.passengers array) */}
               {booking?.passengers && booking.passengers.length > 0 ? (
                 <Card>
-                  <CardHeader>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0">
                     <CardTitle>Passageiros</CardTitle>
+                    {isAdmin ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleRegisterEmployeesFromBooking}
+                        disabled={registeringEmployees}
+                      >
+                        {registeringEmployees ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Cadastrando...
+                          </>
+                        ) : (
+                          "Cadastrar funcionários desta reserva"
+                        )}
+                      </Button>
+                    ) : null}
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-2">
