@@ -11,6 +11,7 @@ import { Plus, Search, Building2, Trash2, Loader2, Upload, X, Pencil, KeyRound }
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeWithAuth } from '@/integrations/supabase/invokeWithAuth';
 import { Company } from '@/types/booking';
 
 interface CompanyWithLogo extends Company {
@@ -80,7 +81,7 @@ export default function CompaniesPage() {
 
     setIsChangingPassword(true);
     try {
-      const { data, error } = await supabase.functions.invoke('company-set-password', {
+      const { data, error } = await invokeWithAuth('company-set-password', {
         body: { company_id: editingCompany.id, new_password: password },
       });
 
@@ -350,7 +351,7 @@ export default function CompaniesPage() {
 
     setIsCreatingAccess(true);
     try {
-      const { data, error } = await supabase.functions.invoke('company-create-access', {
+      const { data, error } = await invokeWithAuth('company-create-access', {
         body: {
           company_id: accessCompany.id,
           email,

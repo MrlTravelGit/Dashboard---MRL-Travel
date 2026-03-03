@@ -1121,97 +1121,6 @@ function extractPassengersFromDom(doc: any): Passenger[] {
   return extractPassengersFromDomWithMeta(doc).passengers;
 }
 
-// Fallback: extract passengers directly from the RAW HTML string.
-// Why: some IDDAS pages ship slightly malformed markup inside the passenger banner
-// (e.g., missing <span> wrappers for some lines). Browsers auto-correct it, but
-// deno_dom can build a different tree and miss a few passengers.
-// This parser is intentionally simple and only looks at the passenger banner area.
-function extractPassengersFromRawHtml(html: string): Passenger[] {
-  try {
-    const src = (html || "");
-    if (!src) return [];
-
-    const lower = src.toLowerCase();
-    const anchor = lower.indexOf("carddadoscomprovante");
-    if (anchor < 0) return [];
-
-    // Take a conservative slice around the passenger banner.
-    const sliceStart = Math.max(0, anchor - 2000);
-    let sliceEnd = Math.min(src.length, anchor + 25000);
-    // Try to end before the flight section if possible.
-    const after = lower.indexOf("voo de ida", anchor);
-    if (after > -1) sliceEnd = Math.min(sliceEnd, after);
-
-    const chunk = src.slice(sliceStart, sliceEnd);
-
-    const decode = (s: string) =>
-      (s || "")
-        .replace(/&nbsp;/gi, " ")
-        .replace(/&amp;/gi, "&")
-        .replace(/&quot;/gi, "\"")
-        .replace(/&#39;/g, "'")
-        .replace(/&lt;/gi, "<")
-        .replace(/&gt;/gi, ">")
-        .replace(/\u00a0/g, " ");
-
-    const stripTags = (s: string) => decode(s).replace(/<[^>]+>/g, " ");
-    const norm = (s: string) => normalizeText(stripTags(s));
-
-    const passengers: Passenger[] = [];
-    const seenCpf = new Set<string>();
-
-    // Match passenger lines.
-    const reP = /<p\s+[^>]*class=["'][^"']*\bfs-6\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/gi;
-    let m: RegExpExecArray | null;
-    while ((m = reP.exec(chunk)) !== null) {
-      const inner = m[1] || "";
-
-      // Prefer the fw-semibold span when present.
-      const nameMatch = inner.match(
-        /<span\s+[^>]*class=["'][^"']*\bfw-semibold\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i,
-      );
-      const rawName = norm(nameMatch?.[1] || "");
-
-      const lineText = norm(inner);
-
-      // If fw-semibold failed (malformed span), fallback to the first chunk before comma.
-      const fallbackName = norm((lineText.split(",")[0] || "").trim());
-      const fullName = rawName || fallbackName;
-      if (!fullName) continue;
-
-      if (!isProbablyPersonName(fullName) || looksLikeCompanyName(fullName) || isLabelName(fullName)) continue;
-
-      const cpfMatch = lineText.match(/\bCPF\s*([0-9.\- ]{11,14})/i);
-      const cpfDigits = normalizeCPF(cpfMatch?.[1] || "");
-      if (cpfDigits.length !== 11) continue;
-      if (seenCpf.has(cpfDigits)) continue;
-      seenCpf.add(cpfDigits);
-
-      const birthMatch = lineText.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
-      const phoneMatch = lineText.match(/(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})/);
-      const emailMatch = lineText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-      const passportMatch = lineText.match(/\bpassaporte\b\s*([A-Z0-9-]+)/i);
-
-      const safeName = sanitizePassengerName(fullName);
-      if (!safeName || !isProbablyPersonName(safeName) || looksLikeCompanyName(safeName) || isLabelName(safeName)) continue;
-
-      passengers.push({
-        fullName: safeName,
-        birthDate: birthMatch?.[1] ? (toISODateFromBR(birthMatch[1]) || "") : "",
-        cpf: cpfDigits,
-        phone: phoneMatch?.[1] ? phoneMatch[1].trim() : "",
-        email: emailMatch?.[0] ? emailMatch[0].trim() : "",
-        passport: passportMatch?.[1] ? passportMatch[1].trim() : "",
-        passportExpiry: "",
-      });
-    }
-
-    return passengers;
-  } catch {
-    return [];
-  }
-}
-
 
 function matchAllHotelsFromDom(doc: any): ExtractedHotel[] {
   try {
@@ -1403,7 +1312,6 @@ let lastHtml = "";
 let lastNormalizedFromHtml = "";
 let lastExpectedPassengerCount: number | null = null;
 let lastPassengersDomMeta: PassengerDomMeta | null = null;
-let lastPassengersHtmlDirectCount: number | null = null;
 
 for (let attempt = 1; attempt <= 2; attempt++) {
   const r = await fetchHtmlOnce(attempt);
@@ -1456,10 +1364,6 @@ for (let attempt = 1; attempt <= 2; attempt++) {
   const passengersDom = domResult.passengers;
   lastPassengersDomMeta = domResult.meta;
 
-  // Extra fallback: parse passenger lines from raw HTML around the banner.
-  const passengersHtmlDirect = extractPassengersFromRawHtml(html);
-  lastPassengersHtmlDirectCount = passengersHtmlDirect.length;
-
   const makePassengerKey = (p: Passenger) => {
     const cpfDigits = normalizeCPF(p.cpf);
     if (cpfDigits.length === 11) return `cpf:${cpfDigits}`;
@@ -1474,7 +1378,7 @@ for (let attempt = 1; attempt <= 2; attempt++) {
   const mergedList: Passenger[] = [];
   const indexByKey = new Map<string, number>();
 
-  const upsertMerged = (p: Passenger, source: "text" | "dom" | "html") => {
+  const upsertMerged = (p: Passenger, source: "text" | "dom") => {
     const key = makePassengerKey(p);
     if (!key) return;
 
@@ -1513,9 +1417,7 @@ for (let attempt = 1; attempt <= 2; attempt++) {
       const shouldReplaceName =
         source === "dom"
           ? (incomingWords >= 2 && incomingName !== existingName)
-          : source === "html"
-            ? (!existingName || !isProbablyPersonName(existingName) || incomingWords > existingWords)
-            : (!existingName || !isProbablyPersonName(existingName) || incomingWords > existingWords);
+          : (!existingName || !isProbablyPersonName(existingName) || incomingWords > existingWords);
 
       if (shouldReplaceName) existing.fullName = incomingName;
     }
@@ -1528,9 +1430,8 @@ for (let attempt = 1; attempt <= 2; attempt++) {
     if (!existing.passportExpiry && p.passportExpiry) existing.passportExpiry = p.passportExpiry;
   };
 
-  // Prefer DOM order first, then raw-HTML fallback, then fill gaps from text extraction
+  // Prefer DOM order first, then fill gaps from text extraction
   for (const p of passengersDom) upsertMerged(p, "dom");
-  for (const p of passengersHtmlDirect) upsertMerged(p, "html");
   for (const p of extractedPassengers) upsertMerged(p, "text");
 
   if (mergedList.length) extractedPassengers = mergedList;
@@ -1705,7 +1606,6 @@ const reservedBy = extractReservedBy(pageText);
           domMeta: lastPassengersDomMeta,
           counts: {
             passengersMerged: passengersOut.length,
-            passengersHtmlDirect: lastPassengersHtmlDirectCount,
             htmlLength: lastHtml.length,
             normalizedTextLength: pageText.length,
             normalizedFromHtmlLength: lastNormalizedFromHtml.length,
