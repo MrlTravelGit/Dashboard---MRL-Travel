@@ -7,6 +7,7 @@ import { CarRentalCard } from '@/components/cards/CarRentalCard';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Loader2, ArrowLeft, ExternalLink } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -39,6 +40,10 @@ export default function BookingDetailsPage() {
   const [booking, setBooking] = useState<BookingRow | null>(null);
 
   const [registeringEmployees, setRegisteringEmployees] = useState(false);
+
+  const [missingBirthDialogOpen, setMissingBirthDialogOpen] = useState(false);
+  const [missingBirthTargets, setMissingBirthTargets] = useState<Array<{ key: string; idx: number; cpf: string; name: string }>>([]);
+  const [missingBirthEdits, setMissingBirthEdits] = useState<Record<string, string>>({});
 
   const [form, setForm] = useState({
     name: "",
@@ -248,194 +253,317 @@ export default function BookingDetailsPage() {
   };
 
 
-  const handleRegisterEmployeesFromBooking = async () => {
-    if (!booking) return;
+	const normalizeCpfDigits = (v: any) => String(v || '').replace(/\D/g, '');
 
-    setRegisteringEmployees(true);
+	const toISODate = (value: any): string | null => {
+	  if (!value) return null;
+	  const raw = String(value).trim();
+	  if (!raw) return null;
+	  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+	  const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+	  if (m) {
+	    const dd = m[1];
+	    const mm = m[2];
+	    const yyyy = m[3];
+	    return `${yyyy}-${mm}-${dd}`;
+	  }
+	  const d = new Date(raw);
+	  if (Number.isNaN(d.getTime())) return null;
+	  return d.toISOString().slice(0, 10);
+	};
 
-    try {
-      const companyId = booking.company_id;
-      const passengers = Array.isArray(booking.passengers) ? booking.passengers : [];
+	const computePassengerKey = (p: any, idx: number) => {
+	  const cpf = normalizeCpfDigits((p as any)?.cpf);
+	  return cpf && cpf.length === 11 ? `cpf:${cpf}` : `idx:${idx}`;
+	};
 
-      const { data: userRes } = await supabase.auth.getUser();
-      const createdBy = userRes?.user?.id ?? null;
+	const registerEmployeesFromPassengers = async (passengersInput: any[]) => {
+	  if (!booking) return;
+	  setRegisteringEmployees(true);
 
-      const normalizeCpfDigits = (v: any) => String(v || '').replace(/\D/g, '');
+	  try {
+	    const companyId = booking.company_id;
+	    const passengers = Array.isArray(passengersInput) ? passengersInput : [];
 
-      const toISODate = (value: any): string | null => {
-        if (!value) return null;
-        const raw = String(value).trim();
-        if (!raw) return null;
+	    const { data: userRes } = await supabase.auth.getUser();
+	    const createdBy = userRes?.user?.id ?? null;
 
-        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+	    const unique = new Map<string, any>();
+	    let skippedMissing = 0;
 
-        const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-        if (m) {
-          const dd = m[1];
-          const mm = m[2];
-          const yyyy = m[3];
-          return `${yyyy}-${mm}-${dd}`;
-        }
+	    for (const p of passengers) {
+	      const cpf = normalizeCpfDigits((p as any)?.cpf);
+	      const full_name = String((p as any)?.name || (p as any)?.full_name || (p as any)?.fullName || '').trim();
+	      const birth_date = toISODate((p as any)?.birth_date || (p as any)?.birthDate || (p as any)?.nasc);
+	      const phoneRaw = String((p as any)?.phone || (p as any)?.tel || '').trim();
+	      const email = String((p as any)?.email || '').trim() || null;
+	      const passport = String((p as any)?.passport || '').trim() || null;
+	      const passport_expiry = toISODate((p as any)?.passport_expiry || (p as any)?.passportExpiry);
 
-        const d = new Date(raw);
-        if (Number.isNaN(d.getTime())) return null;
-        return d.toISOString().slice(0, 10);
-      };
+	      if (!cpf || cpf.length !== 11 || !full_name || !birth_date) {
+	        skippedMissing += 1;
+	        continue;
+	      }
 
-      const unique = new Map<string, any>();
-      let skippedMissing = 0;
+	      const key = `${companyId}:${cpf}`;
+	      const base = {
+	        company_id: companyId,
+	        cpf,
+	        full_name,
+	        birth_date,
+	        phone: (phoneRaw || '').toString(),
+	        email,
+	        passport,
+	        passport_expiry,
+	        created_by: createdBy,
+	      };
 
-      for (const p of passengers) {
-        const cpf = normalizeCpfDigits((p as any)?.cpf);
-        const full_name = String((p as any)?.name || (p as any)?.full_name || (p as any)?.fullName || '').trim();
-        const birth_date = toISODate((p as any)?.birth_date || (p as any)?.birthDate || (p as any)?.nasc);
-        const phoneRaw = String((p as any)?.phone || (p as any)?.tel || '').trim();
-        const email = String((p as any)?.email || '').trim() || null;
-        const passport = String((p as any)?.passport || '').trim() || null;
-        const passport_expiry = toISODate((p as any)?.passport_expiry || (p as any)?.passportExpiry);
+	      if (!unique.has(key)) {
+	        unique.set(key, base);
+	      } else {
+	        const prev = unique.get(key);
+	        if (!prev.phone && base.phone) prev.phone = base.phone;
+	        if (!prev.email && base.email) prev.email = base.email;
+	        if (!prev.passport && base.passport) prev.passport = base.passport;
+	        if (!prev.passport_expiry && base.passport_expiry) prev.passport_expiry = base.passport_expiry;
+	        if (base.full_name) prev.full_name = base.full_name;
+	      }
+	    }
 
-        if (!cpf || cpf.length !== 11 || !full_name || !birth_date) {
-          skippedMissing += 1;
-          continue;
-        }
+	    const payload = Array.from(unique.values());
 
-        const key = `${companyId}:${cpf}`;
-        const base = {
-          company_id: companyId,
-          cpf,
-          full_name,
-          birth_date,
-          phone: (phoneRaw || '').toString(),
-          email,
-          passport,
-          passport_expiry,
-          created_by: createdBy,
-        };
+	    if (payload.length === 0) {
+	      toast({
+	        title: 'Nada para cadastrar',
+	        description: skippedMissing
+	          ? `Nenhum passageiro elegível. ${skippedMissing} item(ns) foi(ram) ignorado(s) por falta de CPF, nome ou nascimento.`
+	          : 'Nenhum passageiro elegível encontrado nesta reserva.',
+	        variant: 'destructive',
+	      });
+	      return;
+	    }
 
-        if (!unique.has(key)) {
-          unique.set(key, base);
-        } else {
-          const prev = unique.get(key);
-          if (!prev.phone && base.phone) prev.phone = base.phone;
-          if (!prev.email && base.email) prev.email = base.email;
-          if (!prev.passport && base.passport) prev.passport = base.passport;
-          if (!prev.passport_expiry && base.passport_expiry) prev.passport_expiry = base.passport_expiry;
-          if (base.full_name) prev.full_name = base.full_name;
-        }
-      }
+	    const cpfList = payload.map((x) => normalizeCpfDigits(x.cpf));
 
-      const payload = Array.from(unique.values());
+	    const { data: existing, error: existingErr } = await supabase
+	      .from('employees')
+	      .select('id, cpf, full_name, birth_date, phone, email, passport, passport_expiry')
+	      .eq('company_id', companyId)
+	      .in('cpf', cpfList);
 
-      if (payload.length === 0) {
-        toast({
-          title: 'Nada para cadastrar',
-          description: skippedMissing
-            ? `Nenhum passageiro elegível. ${skippedMissing} item(ns) foi(ram) ignorado(s) por falta de CPF, nome ou nascimento.`
-            : 'Nenhum passageiro elegível encontrado nesta reserva.',
-          variant: 'destructive',
-        });
-        return;
-      }
+	    if (existingErr) throw existingErr;
 
-      const cpfList = payload.map((x) => normalizeCpfDigits(x.cpf));
+	    const existingMap = new Map<string, any>();
+	    for (const e of existing || []) {
+	      existingMap.set(normalizeCpfDigits((e as any)?.cpf), e);
+	    }
 
-      const { data: existing, error: existingErr } = await supabase
-        .from('employees')
-        .select('id, cpf, full_name, birth_date, phone, email, passport, passport_expiry')
-        .eq('company_id', companyId)
-        .in('cpf', cpfList);
+	    const toInsert: any[] = [];
+	    const toUpdate: any[] = [];
 
-      if (existingErr) throw existingErr;
+	    for (const row of payload) {
+	      const cpf = normalizeCpfDigits(row.cpf);
+	      const found = existingMap.get(cpf);
 
-      const existingMap = new Map<string, any>();
-      for (const e of existing || []) {
-        existingMap.set(normalizeCpfDigits((e as any)?.cpf), e);
-      }
+	      if (!found) {
+	        toInsert.push(row);
+	        continue;
+	      }
 
-      const toInsert: any[] = [];
-      const toUpdate: any[] = [];
+	      const patch: any = {};
 
-      for (const row of payload) {
-        const cpf = normalizeCpfDigits(row.cpf);
-        const found = existingMap.get(cpf);
+	      const existingName = String((found as any)?.full_name || '').trim();
+	      if (
+	        row.full_name &&
+	        (
+	          !existingName ||
+	          /@|hotmail\.com|gmail\.com/i.test(existingName) ||
+	          /^crian[cç]a\s+/i.test(existingName)
+	        )
+	      ) {
+	        patch.full_name = row.full_name;
+	      }
 
-        if (!found) {
-          toInsert.push(row);
-          continue;
-        }
+	      if (!(found as any)?.birth_date && row.birth_date) patch.birth_date = row.birth_date;
+	      if ((!((found as any)?.phone || '').toString().trim()) && row.phone) patch.phone = row.phone;
+	      if (!(found as any)?.email && row.email) patch.email = row.email;
+	      if (!(found as any)?.passport && row.passport) patch.passport = row.passport;
+	      if (!(found as any)?.passport_expiry && row.passport_expiry) patch.passport_expiry = row.passport_expiry;
 
-        const patch: any = {};
+	      if (Object.keys(patch).length > 0) {
+	        toUpdate.push({ id: (found as any).id, patch });
+	      }
+	    }
 
-        const existingName = String((found as any)?.full_name || '').trim();
-        if (
-          row.full_name &&
-          (
-            !existingName ||
-            /@|hotmail\.com|gmail\.com/i.test(existingName) ||
-            /^crian[cç]a\s+/i.test(existingName)
-          )
-        ) {
-          patch.full_name = row.full_name;
-        }
+	    let insertedCount = 0;
+	    let updatedCount = 0;
+	    const alreadyCount = payload.length - toInsert.length;
 
-        if (!(found as any)?.birth_date && row.birth_date) patch.birth_date = row.birth_date;
-        if ((!((found as any)?.phone || '').toString().trim()) && row.phone) patch.phone = row.phone;
-        if (!(found as any)?.email && row.email) patch.email = row.email;
-        if (!(found as any)?.passport && row.passport) patch.passport = row.passport;
-        if (!(found as any)?.passport_expiry && row.passport_expiry) patch.passport_expiry = row.passport_expiry;
+	    if (toInsert.length > 0) {
+	      const { data: inserted, error: insErr } = await supabase
+	        .from('employees')
+	        .insert(toInsert)
+	        .select('id');
 
-        if (Object.keys(patch).length > 0) {
-          toUpdate.push({ id: (found as any).id, patch });
-        }
-      }
+	      if (insErr) throw insErr;
+	      insertedCount = inserted?.length ?? 0;
+	    }
 
-      let insertedCount = 0;
-      let updatedCount = 0;
-      const alreadyCount = payload.length - toInsert.length;
+	    for (const u of toUpdate) {
+	      const { error: updErr } = await supabase
+	        .from('employees')
+	        .update(u.patch)
+	        .eq('id', u.id);
 
-      if (toInsert.length > 0) {
-        const { data: inserted, error: insErr } = await supabase
-          .from('employees')
-          .insert(toInsert)
-          .select('id');
+	      if (updErr) throw updErr;
+	      updatedCount += 1;
+	    }
 
-        if (insErr) throw insErr;
-        insertedCount = inserted?.length ?? 0;
-      }
+	    const parts: string[] = [];
+	    if (insertedCount > 0) parts.push(`${insertedCount} cadastrado(s)`);
+	    if (updatedCount > 0) parts.push(`${updatedCount} atualizado(s)`);
+	    if (alreadyCount > 0) parts.push(`${alreadyCount} já existia(m)`);
+	    if (skippedMissing > 0) parts.push(`${skippedMissing} ignorado(s) por falta de dados`);
 
-      for (const u of toUpdate) {
-        const { error: updErr } = await supabase
-          .from('employees')
-          .update(u.patch)
-          .eq('id', u.id);
+	    toast({
+	      title: 'Funcionários processados',
+	      description: parts.length ? `${parts.join('. ')}.` : 'Nenhuma alteração necessária.',
+	    });
+	  } catch (e: any) {
+	    console.error(e);
+	    toast({
+	      title: 'Erro ao cadastrar funcionários',
+	      description: e?.message || 'Não foi possível cadastrar funcionários desta reserva.',
+	      variant: 'destructive',
+	    });
+	  } finally {
+	    setRegisteringEmployees(false);
+	  }
+	};
 
-        if (updErr) throw updErr;
-        updatedCount += 1;
-      }
+	const handleRegisterEmployeesFromBooking = async () => {
+	  if (!booking) return;
+	  const passengers = Array.isArray(booking.passengers) ? booking.passengers : [];
 
-      const parts: string[] = [];
-      if (insertedCount > 0) parts.push(`${insertedCount} cadastrado(s)`);
-      if (updatedCount > 0) parts.push(`${updatedCount} atualizado(s)`);
-      if (alreadyCount > 0) parts.push(`${alreadyCount} já existia(m)`);
-      if (skippedMissing > 0) parts.push(`${skippedMissing} ignorado(s) por falta de dados`);
+	  const missing: Array<{ key: string; idx: number; cpf: string; name: string }> = [];
+	  passengers.forEach((p: any, idx: number) => {
+	    const cpf = normalizeCpfDigits(p?.cpf);
+	    const name = String(p?.name || p?.full_name || p?.fullName || '').trim();
+	    const birth = toISODate(p?.birth_date || p?.birthDate || p?.nasc);
+	    if (cpf && cpf.length === 11 && name && !birth) {
+	      const key = computePassengerKey(p, idx);
+	      missing.push({ key, idx, cpf, name });
+	    }
+	  });
 
-      toast({
-        title: 'Funcionários processados',
-        description: parts.length ? `${parts.join('. ')}.` : 'Nenhuma alteração necessária.',
-      });
-    } catch (e: any) {
-      console.error(e);
-      toast({
-        title: 'Erro ao cadastrar funcionários',
-        description: e?.message || 'Não foi possível cadastrar funcionários desta reserva.',
-        variant: 'destructive',
-      });
-    } finally {
-      setRegisteringEmployees(false);
-    }
-  };
+	  if (missing.length > 0) {
+	    setMissingBirthTargets(missing);
+	    setMissingBirthEdits((prev) => {
+	      const next = { ...prev };
+	      for (const m of missing) {
+	        if (!(m.key in next)) next[m.key] = '';
+	      }
+	      return next;
+	    });
+	    setMissingBirthDialogOpen(true);
+	    return;
+	  }
+
+	  await registerEmployeesFromPassengers(passengers);
+	};
+
+	const handleSaveMissingBirthdatesAndRegister = async () => {
+	  if (!booking) return;
+	  const passengers = Array.isArray(booking.passengers) ? booking.passengers : [];
+
+	  for (const m of missingBirthTargets) {
+	    const iso = toISODate(missingBirthEdits[m.key]);
+	    if (!iso) {
+	      toast({
+	        title: 'Nascimento obrigatório',
+	        description: 'Preencha a data de nascimento dos passageiros pendentes para cadastrar em Funcionários.',
+	        variant: 'destructive',
+	      });
+	      return;
+	    }
+	  }
+
+	  const updatedPassengers = passengers.map((p: any, idx: number) => {
+	    const target = missingBirthTargets.find((m) => m.idx === idx);
+	    if (!target) return p;
+	    const iso = toISODate(missingBirthEdits[target.key]);
+	    if (!iso) return p;
+	    return {
+	      ...p,
+	      birthDate: iso,
+	      birth_date: iso,
+	    };
+	  });
+
+	  try {
+	    const { error } = await supabase
+	      .from('bookings')
+	      .update({ passengers: updatedPassengers } as any)
+	      .eq('id', booking.id);
+
+	    if (error) throw error;
+
+	    setBooking((prev) => (prev ? { ...prev, passengers: updatedPassengers } : prev));
+	    setMissingBirthDialogOpen(false);
+	    setMissingBirthTargets([]);
+	
+	    await registerEmployeesFromPassengers(updatedPassengers);
+	  } catch (e: any) {
+	    console.error(e);
+	    toast({
+	      title: 'Erro ao salvar nascimento',
+	      description: e?.message || 'Não foi possível salvar o nascimento dos passageiros.',
+	      variant: 'destructive',
+	    });
+	  }
+	};
   return (
     <DashboardLayout>
+	    <Dialog open={missingBirthDialogOpen} onOpenChange={setMissingBirthDialogOpen}>
+	      <DialogContent>
+	        <DialogHeader>
+	          <DialogTitle>Completar nascimento dos passageiros</DialogTitle>
+	        </DialogHeader>
+
+	        <div className="space-y-3">
+	          <div className="text-sm text-muted-foreground">
+	            Para cadastrar na aba Funcionários, precisamos da data de nascimento dos passageiros abaixo.
+	          </div>
+
+	          <div className="space-y-2">
+	            {missingBirthTargets.map((p) => (
+	              <div key={p.key} className="border rounded-md p-3 space-y-2">
+	                <div className="text-sm font-medium">{p.name}</div>
+	                <div className="text-xs text-muted-foreground">CPF: {p.cpf}</div>
+	                <Input
+	                  type="date"
+	                  value={missingBirthEdits[p.key] ?? ''}
+	                  onChange={(e) => {
+	                    const v = e.target.value;
+	                    setMissingBirthEdits((prev) => ({ ...prev, [p.key]: v }));
+	                  }}
+	                />
+	              </div>
+	            ))}
+	          </div>
+
+	          <div className="flex justify-end gap-2 pt-2">
+	            <Button variant="outline" onClick={() => setMissingBirthDialogOpen(false)}>
+	              Cancelar
+	            </Button>
+	            <Button onClick={handleSaveMissingBirthdatesAndRegister}>
+	              Salvar e cadastrar
+	            </Button>
+	          </div>
+	        </div>
+	      </DialogContent>
+	    </Dialog>
+
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">

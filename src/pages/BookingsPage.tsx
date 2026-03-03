@@ -54,6 +54,9 @@ export default function BookingsPage() {
   // Edição manual de nomes quando o IDDAS não retorna o nome no HTML.
   // Chave preferida: CPF, fallback: índice.
   const [passengerNameEdits, setPassengerNameEdits] = useState<Record<string, string>>({});
+  // Edição manual de nascimento quando o IDDAS não retorna (necessário para cadastrar em Funcionários).
+  // Armazenamos em ISO (YYYY-MM-DD).
+  const [passengerBirthDateEdits, setPassengerBirthDateEdits] = useState<Record<string, string>>({});
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [autoRegisterEmployees, setAutoRegisterEmployees] = useState(true);
   
@@ -81,6 +84,15 @@ export default function BookingsPage() {
   useEffect(() => {
     if (!extractedData?.passengers) return;
     setPassengerNameEdits(prev => {
+      const next = { ...prev };
+      extractedData.passengers.forEach((p: any, idx: number) => {
+        const key = computeEditKey(p, idx);
+        if (!(key in next)) next[key] = '';
+      });
+      return next;
+    });
+
+    setPassengerBirthDateEdits(prev => {
       const next = { ...prev };
       extractedData.passengers.forEach((p: any, idx: number) => {
         const key = computeEditKey(p, idx);
@@ -599,10 +611,11 @@ export default function BookingsPage() {
         const editKey = cpfDigits ? `cpf:${cpfDigits}` : `idx:${idx}`;
         const editedName = (passengerNameEdits[editKey] ?? "").trim();
         const finalName = extractedName || editedName;
+        const editedBirth = (passengerBirthDateEdits[editKey] ?? '').toString().trim();
         return {
           name: finalName,
           cpf: cpfDigits || (p.cpf ?? ''),
-          birthDate: toIsoDate(p.birthDate ?? p.birth_date ?? p.nasc ?? p.birth),
+          birthDate: toIsoDate(p.birthDate ?? p.birth_date ?? p.nasc ?? p.birth) || toIsoDate(editedBirth),
           phone: (p.phone ?? '').toString(),
           email: p.email ?? null,
           passport: p.passport ?? null,
@@ -1097,45 +1110,96 @@ export default function BookingsPage() {
                                   <span className="text-muted-foreground">Cadastrar automaticamente</span>
                                 </label>
                               </div>
-                              <div className="space-y-1">
-                                {extractedData.passengers.map((p: any, idx: number) => {
-                                  const extractedName = (p.name ?? "").trim();
-                                  const cpfDigits = (p.cpf ?? "").toString().replace(/\D/g, "");
-                                  const editKey = cpfDigits ? `cpf:${cpfDigits}` : `idx:${idx}`;
-                                  const editedName = passengerNameEdits[editKey] ?? "";
-                                  const showInput = extractedName.length === 0;
-                                  const displayName = extractedName || editedName.trim();
-                                  return (
-                                    <div key={editKey} className="text-xs bg-background/50 p-2 rounded border">
-                                      <div className="space-y-2">
-                                        {showInput ? (
-                                          <div className="space-y-1">
-                                            <div className="font-medium text-foreground">Nome não identificado</div>
-                                            <Input
-                                              value={passengerNameEdits[editKey] ?? ""}
-                                              onChange={(e) => {
-                                                const v = e.target.value;
-                                                setPassengerNameEdits(prev => ({ ...prev, [editKey]: v }));
-                                              }}
-                                              placeholder="Digite o nome completo"
-                                              className="h-8 text-xs"
-                                            />
-                                          </div>
-                                        ) : (
-                                          <div className="font-medium text-foreground">{displayName}</div>
-                                        )}
-                                      </div>
-                                      <div className="text-muted-foreground flex flex-wrap gap-2 mt-1">
-                                        {p.cpf && <span>CPF: {p.cpf}</span>}
-                                        {p.birthDate && <span>Nasc: {new Date(p.birthDate).toLocaleDateString('pt-BR')}</span>}
-                                        {p.phone && <span>Tel: {p.phone}</span>}
-                                        {p.email && <span>{p.email}</span>}
-                                        {p.passport && <span>Passaporte: {p.passport}</span>}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
+	                              <div className="space-y-1">
+	                                {extractedData.passengers.map((p: any, idx: number) => {
+	                                  const extractedName = (p.name ?? "").trim();
+	                                  const cpfDigits = (p.cpf ?? "").toString().replace(/\D/g, "");
+	                                  const editKey = cpfDigits ? `cpf:${cpfDigits}` : `idx:${idx}`;
+	                                  const editedName = passengerNameEdits[editKey] ?? "";
+	                                  const showNameInput = extractedName.length === 0;
+	                                  const displayName = extractedName || editedName.trim();
+
+	                                  const rawBirth = (p.birthDate ?? p.birth_date ?? p.nasc ?? p.birth ?? '').toString().trim();
+	                                  const birthIsoFromData = (() => {
+	                                    if (!rawBirth) return '';
+	                                    if (/^\d{4}-\d{2}-\d{2}$/.test(rawBirth)) return rawBirth;
+	                                    const m = rawBirth.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+	                                    if (m) {
+	                                      const dd = m[1];
+	                                      const mm = m[2];
+	                                      const yyyy = m[3];
+	                                      return `${yyyy}-${mm}-${dd}`;
+	                                    }
+	                                    return '';
+	                                  })();
+	                                  const editedBirthIso = (passengerBirthDateEdits[editKey] ?? '').toString().trim();
+	                                  const finalBirthIso = birthIsoFromData || editedBirthIso;
+	                                  const showBirthInput = !birthIsoFromData;
+
+	                                  return (
+	                                    <div key={editKey} className="text-xs bg-background/50 p-2 rounded border">
+	                                      <div className="space-y-2">
+	                                        {showNameInput ? (
+	                                          <div className="space-y-2">
+	                                            <div className="space-y-1">
+	                                              <div className="font-medium text-foreground">Nome não identificado</div>
+	                                              <Input
+	                                                value={passengerNameEdits[editKey] ?? ""}
+	                                                onChange={(e) => {
+	                                                  const v = e.target.value;
+	                                                  setPassengerNameEdits(prev => ({ ...prev, [editKey]: v }));
+	                                                }}
+	                                                placeholder="Digite o nome completo"
+	                                                className="h-8 text-xs"
+	                                              />
+	                                            </div>
+
+	                                            {showBirthInput ? (
+	                                              <div className="space-y-1">
+	                                                <div className="text-muted-foreground">Nascimento não identificado</div>
+	                                                <Input
+	                                                  type="date"
+	                                                  value={editedBirthIso}
+	                                                  onChange={(e) => {
+	                                                    const v = e.target.value;
+	                                                    setPassengerBirthDateEdits(prev => ({ ...prev, [editKey]: v }));
+	                                                  }}
+	                                                  className="h-8 text-xs"
+	                                                />
+	                                              </div>
+	                                            ) : null}
+	                                          </div>
+	                                        ) : (
+	                                          <div className="space-y-2">
+	                                            <div className="font-medium text-foreground">{displayName}</div>
+	                                            {showBirthInput ? (
+	                                              <div className="space-y-1">
+	                                                <div className="text-muted-foreground">Nascimento não identificado</div>
+	                                                <Input
+	                                                  type="date"
+	                                                  value={editedBirthIso}
+	                                                  onChange={(e) => {
+	                                                    const v = e.target.value;
+	                                                    setPassengerBirthDateEdits(prev => ({ ...prev, [editKey]: v }));
+	                                                  }}
+	                                                  className="h-8 text-xs"
+	                                                />
+	                                              </div>
+	                                            ) : null}
+	                                          </div>
+	                                        )}
+	                                      </div>
+	                                      <div className="text-muted-foreground flex flex-wrap gap-2 mt-1">
+	                                        {p.cpf && <span>CPF: {p.cpf}</span>}
+	                                        {finalBirthIso && <span>Nasc: {new Date(finalBirthIso).toLocaleDateString('pt-BR')}</span>}
+	                                        {p.phone && <span>Tel: {p.phone}</span>}
+	                                        {p.email && <span>{p.email}</span>}
+	                                        {p.passport && <span>Passaporte: {p.passport}</span>}
+	                                      </div>
+	                                    </div>
+	                                  );
+	                                })}
+	                              </div>
                             </div>
                           )}
                         </CardContent>
