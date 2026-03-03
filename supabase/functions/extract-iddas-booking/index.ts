@@ -961,12 +961,20 @@ function extractPassengersFromDomWithMeta(doc: any): PassengerDomResult {
     if (!doc?.querySelectorAll) {
       meta.notes.push("dom_missing");
       return { passengers: [], meta };
-    }
+    }// Prefer a tight DOM scope to avoid mixing passenger data with flights/hotel.
+// In IDDAS pages, passengers are commonly inside the blue card: .cardDadosComprovante
+const passengerCard =
+  doc.querySelector?.(".cardDadosComprovante") ||
+  doc.querySelector?.(".cardDadosComprovante.card") ||
+  null;
 
-    const pFs6 = Array.from(doc.querySelectorAll("p.fs-6") || []);
-    const pAll = Array.from(doc.querySelectorAll("p") || []);
-    const iconPerson = Array.from(doc.querySelectorAll("i.bi-person") || []);
-    const spanFw = Array.from(doc.querySelectorAll("span.fw-semibold") || []);
+const scope = passengerCard || doc;
+if (passengerCard) meta.notes.push("scope_cardDadosComprovante");
+
+const pFs6 = Array.from(scope.querySelectorAll("p.fs-6") || []);
+const pAll = Array.from(scope.querySelectorAll("p") || []);
+const iconPerson = Array.from(scope.querySelectorAll("i.bi-person") || []);
+const spanFw = Array.from(scope.querySelectorAll("span.fw-semibold") || []);
 
     meta.methodCounts = {
       pFs6: pFs6.length,
