@@ -1254,6 +1254,48 @@ function matchAllCars(pageText: string): ExtractedCar[] {
     });
   }
 
+  // Fallback: alguns vouchers do Iddas mostram o aluguel de carro dentro da
+  // seção "Transporte" e só exibem a descrição do veículo (sem "Locadora",
+  // "Retirada" ou "Devolução").
+  // Exemplo:
+  //   Transporte
+  //   (BX) VW Polo, Hyundai HB20 1.0 ou similar
+  if (cars.length === 0) {
+    const lines = pageText
+      .split("\n")
+      .map((l) => l.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]?.toLowerCase();
+      if (!line) continue;
+
+      const isTransportHeader = line === "transporte" || line.startsWith("transporte ");
+      if (!isTransportHeader) continue;
+
+      const next = lines[i + 1] ?? "";
+      if (!next) continue;
+
+      const nextLower = next.toLowerCase();
+      // Evita pegar cabeçalhos de outras seções.
+      if (
+        nextLower.startsWith("servi") ||
+        nextLower.startsWith("hosped") ||
+        nextLower.startsWith("voo") ||
+        nextLower.startsWith("passage")
+      ) {
+        continue;
+      }
+
+      cars.push({
+        company: undefined,
+        category: next,
+      });
+
+      break;
+    }
+  }
+
   return cars;
 }
 
