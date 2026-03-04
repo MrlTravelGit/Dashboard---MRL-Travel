@@ -1299,6 +1299,92 @@ function matchAllCars(pageText: string): ExtractedCar[] {
   return cars;
 }
 
+
+function matchCarsFromDom(doc: Document): any[] {
+  const cars: any[] = [];
+
+  const titles = Array.from(
+    doc.querySelectorAll('h6.card-title, h5.card-title, h4.card-title')
+  ) as Element[];
+
+  for (const title of titles) {
+    const label = (title.textContent || '').trim().toLowerCase();
+    if (label !== 'transporte') continue;
+
+    // Estrutura típica: col (header) -> row -> col (container) -> mb-3 (conteúdo)
+    const innerCol = title.closest('div.col') as Element | null;
+    const headerRow = innerCol?.parentElement as Element | null;
+    const outerCol = headerRow?.parentElement as Element | null;
+    const scope = outerCol || headerRow || innerCol || (title.parentElement as Element | null);
+    if (!scope) continue;
+
+    const descEl = (scope.querySelector('h6.hDescricao') ||
+      scope.querySelector('.hDescricao')) as Element | null;
+    const rawDesc = (descEl?.textContent || '').trim();
+    if (!rawDesc) continue;
+
+    // Tenta pegar algum identificador (às vezes aparece como badge)
+    const badge = scope.querySelector('span.badge') as Element | null;
+    const locator = (badge?.textContent || '').trim() || null;
+
+    cars.push({
+      company: null,
+      locator,
+      category: rawDesc,
+      carModel: rawDesc,
+      pickup: null,
+      dropoff: null,
+      pickupDate: null,
+      returnDate: null,
+      pickupLocation: null,
+      returnLocation: null,
+      price: null,
+      driver: null,
+    });
+  }
+
+  return cars;
+}
+
+function dedupeCars(list: any[]): any[] {
+  const seen = new Set<string>();
+  const out: any[] = [];
+
+  for (const c of list || []) {
+    const model = c?.carModel || c?.category || '';
+    const loc = c?.locator || '';
+    const pDate = c?.pickupDate || c?.pickup?.date || '';
+    const rDate = c?.returnDate || c?.dropoff?.date || '';
+    const key = [loc, model, pDate, rDate].join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+
+  return out;
+}
+
+function normalizeCarsWithHotelDates(cars: any[], hotelsOut: any[]): any[] {
+  const h0 = (hotelsOut && hotelsOut.length ? hotelsOut[0] : null) as any;
+
+  return (cars || []).map((c) => {
+    const pickupDate = c?.pickupDate || c?.pickup?.date || null;
+    const returnDate = c?.returnDate || c?.dropoff?.date || null;
+
+    const patchedPickup = pickupDate || h0?.checkIn || null;
+    const patchedReturn = returnDate || h0?.checkOut || null;
+
+    const carModel = c?.carModel || c?.category || null;
+
+    return {
+      ...c,
+      carModel,
+      pickupDate: patchedPickup,
+      returnDate: patchedReturn,
+    };
+  });
+}
+
 serve(async (req: Request) => {
   const corsHeaders = buildCorsHeaders(req);
   if (req.method === "OPTIONS") {
@@ -1521,7 +1607,10 @@ const reservedBy = extractReservedBy(pageText);
       hotelSeen.add(key);
       hotels.push(h);
     }
-    const cars = matchAllCars(pageText) || [];
+    const cars = dedupeCars([
+    ...(matchAllCars(pageText) || []),
+    ...matchCarsFromDom(doc),
+  ]);
 
     const suggestedTitle =
       flights.length > 0
@@ -1625,7 +1714,9 @@ const reservedBy = extractReservedBy(pageText);
       passport: p.passport || undefined,
     }));
 
-    const dataOut = {
+    const carsOut = normalizeCarsWithHotelDates(cars, hotelsOut);
+
+const dataOut = {
       total: total ?? null,
       suggestedTitle,
       mainPassengerName,
@@ -1633,7 +1724,8 @@ const reservedBy = extractReservedBy(pageText);
       reservedBy,
       flights,
       hotels: hotelsOut,
-      cars,
+      cars: carsOut,
+      carRentals: carsOut,
     };
 
     const shouldIncludeDebug =
