@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useBooking } from '@/contexts/BookingContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { CarRentalCard } from '@/components/cards/CarRentalCard';
@@ -8,18 +8,36 @@ import { Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function CarRentalsPage() {
-  const { carRentals, deleteCarRental } = useBooking();
+  const { carRentals, bookings, deleteCarRental } = useBooking();
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredCarRentals = carRentals.filter(car => {
-    return (
-      car.locator.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      car.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      car.carModel.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      car.driverName.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  });
+  const bookingTitleById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const b of bookings) map[b.id] = b.title;
+    return map;
+  }, [bookings]);
+
+  const filteredCarRentals = useMemo(() => {
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) return carRentals;
+
+    return carRentals.filter((car) => {
+      const locator = String(car.locator || '').toLowerCase();
+      const company = String(car.company || '').toLowerCase();
+      const carModel = String(car.carModel || '').toLowerCase();
+      const driver = String(car.driverName || '').toLowerCase();
+      const bookingTitle = car.bookingId ? String(bookingTitleById[car.bookingId] || '').toLowerCase() : '';
+
+      return (
+        locator.includes(term) ||
+        company.includes(term) ||
+        carModel.includes(term) ||
+        driver.includes(term) ||
+        bookingTitle.includes(term)
+      );
+    });
+  }, [carRentals, searchTerm, bookingTitleById]);
 
   return (
     <DashboardLayout>
@@ -32,23 +50,21 @@ export default function CarRentalsPage() {
           {isAdmin ? <CarRentalForm /> : null}
         </div>
 
-        {/* Filters */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar por localizador, locadora, modelo ou condutor..."
+            placeholder="Buscar por localizador, locadora, modelo, condutor ou reserva..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-10"
           />
         </div>
 
-        {/* Car Rental List */}
         {filteredCarRentals.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground">
-              {searchTerm 
-                ? 'Nenhum aluguel encontrado com os filtros aplicados.' 
+              {searchTerm
+                ? 'Nenhum aluguel encontrado com os filtros aplicados.'
                 : 'Nenhum aluguel de carro cadastrado ainda.'}
             </p>
           </div>
@@ -58,6 +74,8 @@ export default function CarRentalsPage() {
               <CarRentalCard
                 key={car.id}
                 carRental={car}
+                bookingTitle={car.bookingId ? bookingTitleById[car.bookingId] : undefined}
+                showBookingLink
                 onDelete={isAdmin ? deleteCarRental : undefined}
               />
             ))}

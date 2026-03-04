@@ -1374,11 +1374,12 @@ function normalizeCarsWithHotelDates(cars: any[], hotelsOut: any[]): any[] {
     const patchedPickup = pickupDate || h0?.checkIn || null;
     const patchedReturn = returnDate || h0?.checkOut || null;
 
-    const carModel = c?.carModel || c?.category || null;
-
     return {
       ...c,
-      carModel,
+      company: c?.company || 'Locadora',
+      // Para o painel, basta identificar que existe um aluguel nas datas.
+      // Mantemos a descrição em "category" (se existir), mas não exibimos como modelo.
+      carModel: null,
       pickupDate: patchedPickup,
       returnDate: patchedReturn,
     };
