@@ -76,7 +76,8 @@ function AppRoutes() {
       <Route path="/hospedagens" element={<ProtectedRoute><HotelsPage /></ProtectedRoute>} />
       <Route path="/aluguel-carro" element={<ProtectedRoute><CarRentalsPage /></ProtectedRoute>} />
       <Route path="/empresas" element={<ProtectedRoute><AdminRoute><CompaniesPage /></AdminRoute></ProtectedRoute>} />
-      <Route path="/funcionarios" element={<ProtectedRoute><AdminRoute><EmployeesPage /></AdminRoute></ProtectedRoute>} />
+      {/* Usuários de empresa também devem acessar a aba de Funcionários, porém com filtro por company_id */}
+      <Route path="/funcionarios" element={<ProtectedRoute><EmployeesPage /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

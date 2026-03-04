@@ -19,7 +19,8 @@ const menuItems = [
   { title: 'Hospedagens', url: '/hospedagens', icon: Building2, adminOnly: false },
   { title: 'Aluguel de Carro', url: '/aluguel-carro', icon: Car, adminOnly: false },
   { title: 'Empresas', url: '/empresas', icon: Users, adminOnly: true },
-  { title: 'Funcionários', url: '/funcionarios', icon: UserCheck, adminOnly: true },
+  // Para usuários de empresa, deve aparecer e listar apenas os funcionários vinculados à empresa.
+  { title: 'Funcionários', url: '/funcionarios', icon: UserCheck, adminOnly: false },
 ];
 
 export function AppSidebar() {

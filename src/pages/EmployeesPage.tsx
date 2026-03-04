@@ -98,7 +98,19 @@ export default function EmployeesPage() {
     setForcedCompanyId(cid);
 
     // Para usuário não-admin, já fixa o filtro na empresa dele
-    if (cid) setSelectedCompanyId(cid);
+    if (cid) {
+      setSelectedCompanyId(cid);
+
+      // Para usuários de empresa, buscamos o nome para exibir corretamente no topo.
+      // Isso não altera nenhuma lógica de extração ou cadastro, apenas UI.
+      const { data: companyRow } = await supabase
+        .from('companies')
+        .select('id, name')
+        .eq('id', cid)
+        .maybeSingle();
+
+      if (companyRow?.id) setCompanies([companyRow]);
+    }
 
     return cid;
   };
