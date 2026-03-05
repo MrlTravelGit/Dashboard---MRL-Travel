@@ -3,6 +3,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -37,6 +38,7 @@ export default function CompaniesPage() {
 
   const [accessOpen, setAccessOpen] = useState(false);
   const [accessCompany, setAccessCompany] = useState<CompanyWithLogo | null>(null);
+	const [accessCompanyId, setAccessCompanyId] = useState('');
   const [accessEmail, setAccessEmail] = useState('');
   const [accessPassword, setAccessPassword] = useState('');
   const [accessConfirm, setAccessConfirm] = useState('');
@@ -311,6 +313,7 @@ export default function CompaniesPage() {
 
   const resetAccessModal = () => {
     setAccessCompany(null);
+    setAccessCompanyId('');
     setAccessEmail('');
     setAccessPassword('');
     setAccessConfirm('');
@@ -320,7 +323,17 @@ export default function CompaniesPage() {
 
   const handleOpenCreateAccess = (company: CompanyWithLogo) => {
     setAccessCompany(company);
+    setAccessCompanyId(company.id);
     setAccessEmail(company.email || '');
+    setAccessPassword('');
+    setAccessConfirm('');
+    setAccessOpen(true);
+  };
+
+  const handleOpenCreateAccessFromTop = () => {
+    setAccessCompany(null);
+    setAccessCompanyId('');
+    setAccessEmail('');
     setAccessPassword('');
     setAccessConfirm('');
     setAccessOpen(true);
@@ -372,7 +385,7 @@ export default function CompaniesPage() {
           : `Convite enviado por e-mail e usuário vinculado à empresa.`,
       });
 
-      setAccessOpen(false);
+	    resetAccessModal();
       fetchCompanies();
     } catch (err: any) {
       console.error('company-create-access', err);
@@ -453,8 +466,14 @@ export default function CompaniesPage() {
             <h2 className="text-2xl font-bold text-foreground">Empresas</h2>
             <p className="text-muted-foreground">Gerencie as empresas cadastradas no sistema</p>
           </div>
-          
-          <Dialog open={open} onOpenChange={(o) => {
+
+	          <div className="flex gap-2">
+	            <Button type="button" variant="outline" onClick={handleOpenCreateAccessFromTop}>
+	              <KeyRound className="h-4 w-4 mr-2" />
+	              Criar Acesso
+	            </Button>
+
+	            <Dialog open={open} onOpenChange={(o) => {
             setOpen(o);
             if (!o) {
               setEditingCompany(null);
@@ -660,84 +679,114 @@ export default function CompaniesPage() {
                     </Button>
                   </div>
                 </DialogContent>
-              </Dialog>
-
-              <Dialog
-                open={accessOpen}
-                onOpenChange={(o) => {
-                  setAccessOpen(o);
-                  if (!o) resetAccessModal();
-                }}
-              >
-                <DialogContent className="max-w-md">
-                  <DialogHeader>
-                    <DialogTitle>Criar acesso para empresa</DialogTitle>
-                  </DialogHeader>
-
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>Empresa</Label>
-                      <Input value={accessCompany?.name || ''} readOnly />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="access-email">E-mail de acesso</Label>
-                      <Input
-                        id="access-email"
-                        type="email"
-                        value={accessEmail}
-                        onChange={(e) => setAccessEmail(e.target.value)}
-                        placeholder="empresa@email.com"
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="access-password">Senha (opcional)</Label>
-                      <Input
-                        id="access-password"
-                        type="password"
-                        value={accessPassword}
-                        onChange={(e) => setAccessPassword(e.target.value)}
-                        placeholder="Mínimo 6 caracteres"
-                        minLength={6}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Se deixar em branco, o sistema envia um convite por e-mail.
-                      </p>
-                    </div>
-
-                    {accessPassword.trim() && (
-                      <div className="space-y-2">
-                        <Label htmlFor="access-confirm">Confirmar senha</Label>
-                        <Input
-                          id="access-confirm"
-                          type="password"
-                          value={accessConfirm}
-                          onChange={(e) => setAccessConfirm(e.target.value)}
-                          placeholder="Repita a senha"
-                          minLength={6}
-                        />
-                      </div>
-                    )}
-
-                    <div className="flex justify-end gap-2">
-                      <Button type="button" variant="outline" onClick={() => setAccessOpen(false)}>
-                        Cancelar
-                      </Button>
-                      <Button type="button" onClick={handleCreateAccess} disabled={isCreatingAccess}>
-                        {isCreatingAccess && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Criar acesso
-                      </Button>
-                    </div>
-                  </div>
-                </DialogContent>
-              </Dialog>
-
+	            </Dialog>
+	          </div>
 
             </DialogContent>
           </Dialog>
         </div>
+
+	        <Dialog
+	          open={accessOpen}
+	          onOpenChange={(o) => {
+	            if (!o) {
+	              resetAccessModal();
+	              return;
+	            }
+	            setAccessOpen(true);
+	          }}
+	        >
+	          <DialogContent className="max-w-md">
+	            <DialogHeader>
+	              <DialogTitle>Criar acesso para empresa</DialogTitle>
+	            </DialogHeader>
+
+	            <div className="space-y-4">
+	              <div className="space-y-2">
+	                <Label>Empresa *</Label>
+	                {accessCompany ? (
+	                  <Input value={accessCompany.name} readOnly />
+	                ) : (
+	                  <Select
+	                    value={accessCompanyId}
+	                    onValueChange={(value) => {
+	                      setAccessCompanyId(value);
+	                      const selected = companies.find((c) => c.id === value) || null;
+	                      setAccessCompany(selected);
+	                      setAccessEmail(selected?.email || '');
+	                    }}
+	                  >
+	                    <SelectTrigger>
+	                      <SelectValue placeholder="Selecione..." />
+	                    </SelectTrigger>
+	                    <SelectContent>
+	                      {companies.map((c) => (
+	                        <SelectItem key={c.id} value={c.id}>
+	                          {c.name}
+	                        </SelectItem>
+	                      ))}
+	                    </SelectContent>
+	                  </Select>
+	                )}
+	              </div>
+
+	              <div className="space-y-2">
+	                <Label htmlFor="access-email">E-mail de acesso *</Label>
+	                <Input
+	                  id="access-email"
+	                  type="email"
+	                  value={accessEmail}
+	                  onChange={(e) => setAccessEmail(e.target.value)}
+	                  placeholder="empresa@email.com"
+	                  required
+	                />
+	              </div>
+
+	              <div className="space-y-2">
+	                <Label htmlFor="access-password">Senha (opcional)</Label>
+	                <Input
+	                  id="access-password"
+	                  type="password"
+	                  value={accessPassword}
+	                  onChange={(e) => setAccessPassword(e.target.value)}
+	                  placeholder="Mínimo 6 caracteres"
+	                  minLength={6}
+	                />
+	                <p className="text-xs text-muted-foreground">
+	                  Se deixar em branco, o sistema envia um convite por e-mail.
+	                </p>
+	              </div>
+
+	              {accessPassword.trim() && (
+	                <div className="space-y-2">
+	                  <Label htmlFor="access-confirm">Confirmar senha</Label>
+	                  <Input
+	                    id="access-confirm"
+	                    type="password"
+	                    value={accessConfirm}
+	                    onChange={(e) => setAccessConfirm(e.target.value)}
+	                    placeholder="Repita a senha"
+	                    minLength={6}
+	                  />
+	                </div>
+	              )}
+
+	              <div className="flex justify-end gap-2">
+	                <Button type="button" variant="outline" onClick={resetAccessModal}>
+	                  Cancelar
+	                </Button>
+	                <Button
+	                  type="button"
+	                  onClick={handleCreateAccess}
+	                  disabled={isCreatingAccess || !accessCompany}
+	                >
+	                  {isCreatingAccess && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+	                  Criar acesso
+	                </Button>
+	              </div>
+	            </div>
+	          </DialogContent>
+	        </Dialog>
 
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -803,12 +852,17 @@ export default function CompaniesPage() {
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleOpenCreateAccess(company)}
-                            title="Criar acesso"
-                          >
+	                          <Button
+	                            type="button"
+	                            variant="ghost"
+	                            size="icon"
+	                            onClick={(e) => {
+	                              e.preventDefault();
+	                              e.stopPropagation();
+	                              handleOpenCreateAccess(company);
+	                            }}
+	                            title="Criar acesso"
+	                          >
                             <KeyRound className="h-4 w-4" />
                           </Button>
                           <Button
