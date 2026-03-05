@@ -680,7 +680,6 @@ export default function CompaniesPage() {
                   </div>
                 </DialogContent>
 	            </Dialog>
-	          </div>
 
             </DialogContent>
           </Dialog>
