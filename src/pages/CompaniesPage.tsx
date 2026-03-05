@@ -340,7 +340,11 @@ export default function CompaniesPage() {
   };
 
   const handleCreateAccess = async () => {
-    if (!accessCompany?.id) return;
+    const companyId = accessCompany?.id || accessCompanyId;
+    if (!companyId) {
+      toast({ title: 'Selecione a empresa', variant: 'destructive' });
+      return;
+    }
 
     const email = accessEmail.trim().toLowerCase();
     const password = accessPassword.trim();
@@ -366,7 +370,7 @@ export default function CompaniesPage() {
     try {
       const { data, error } = await invokeWithAuth('company-create-access', {
         body: {
-          company_id: accessCompany.id,
+          company_id: companyId,
           email,
           password: password ? password : null,
           role: 'user',
@@ -683,9 +687,10 @@ export default function CompaniesPage() {
 
             </DialogContent>
           </Dialog>
-        </div>
+	      </div>
+	    </div>
 
-	        <Dialog
+	    <Dialog
 	          open={accessOpen}
 	          onOpenChange={(o) => {
 	            if (!o) {
