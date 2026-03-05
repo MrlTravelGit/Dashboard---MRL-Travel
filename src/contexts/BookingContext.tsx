@@ -17,6 +17,15 @@ import {
 } from "@/types/booking";
 
 interface BookingContextType {
+  // Lista base de reservas (metadados). Útil para páginas que precisam mapear bookingId -> nome.
+  // Mantém escopo mínimo para reduzir acoplamento entre módulos.
+  bookings: Array<{
+    id: string;
+    title: string;
+    company_id: string;
+    created_at: string;
+  }>;
+
   flights: Flight[];
   hotels: Hotel[];
   carRentals: CarRental[];
@@ -216,6 +225,17 @@ export function BookingProvider({ children }: { children: ReactNode }) {
       for (const f of list) out.push({ ...f, bookingId: b.id });
     }
     return out;
+  }, [bookings]);
+
+  const bookingsForUI = useMemo(() => {
+    // Garante que páginas não quebrem ao iterar, mesmo se algum retorno vier inesperado.
+    const list = Array.isArray(bookings) ? bookings : [];
+    return list.map((b) => ({
+      id: b.id,
+      title: String(b.name || "").trim() || "Reserva",
+      company_id: b.company_id,
+      created_at: b.created_at,
+    }));
   }, [bookings]);
 
   const hotels = useMemo(() => {
@@ -439,6 +459,7 @@ export function BookingProvider({ children }: { children: ReactNode }) {
   return (
     <BookingContext.Provider
       value={{
+        bookings: bookingsForUI,
         flights,
         hotels,
         carRentals,
