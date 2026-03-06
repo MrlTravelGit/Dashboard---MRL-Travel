@@ -731,9 +731,11 @@ export default function BookingsPage() {
                 ...p,
                 // alguns schemas deixam phone NOT NULL, então garantimos string
                 phone: (p.phone ?? '').toString(),
+                // birth_date pode vir vazio em cadastros manuais. Tentamos inserir como null.
+                birth_date: p.birth_date ?? null,
               }))
-              // birth_date pode ser obrigatório no schema. Se não tiver, pula para não quebrar o insert.
-              .filter((p) => !!p.cpf && !!p.full_name && !!p.birth_date);
+              // Mantém apenas os dados realmente obrigatórios
+              .filter((p) => !!p.cpf && !!p.full_name);
 
             const cpfs = sanitized.map((p) => normalizeCpfDigits(p.cpf));
             const uniqueCpfs = Array.from(new Set(cpfs)).filter((c) => c.length === 11);
@@ -751,13 +753,43 @@ export default function BookingsPage() {
               const toInsert = sanitized.filter((p) => !existingSet.has(normalizeCpfDigits(p.cpf)));
 
               if (toInsert.length > 0) {
-                const { data: inserted, error: insErr } = await supabase
-                  .from('employees')
-                  .insert(toInsert)
-                  .select('id');
+                // Estratégia de compatibilidade:
+                // 1) tenta inserir mesmo sem birth_date (null)
+                // 2) se o schema exigir birth_date, refaz insert apenas com os que têm data
+                const tryInsert = async (rows: any[]) => {
+                  const { data: inserted, error: insErr } = await supabase
+                    .from('employees')
+                    .insert(rows)
+                    .select('id');
+                  if (insErr) throw insErr;
+                  return inserted?.length ?? 0;
+                };
 
-                if (insErr) throw insErr;
-                employeesCreated = inserted?.length ?? 0;
+                try {
+                  employeesCreated = await tryInsert(toInsert);
+                } catch (insertErr: any) {
+                  const withBirthDate = toInsert.filter((p: any) => !!p.birth_date);
+                  const withoutBirthDate = toInsert.filter((p: any) => !p.birth_date);
+
+                  if (withBirthDate.length > 0) {
+                    try {
+                      const created = await tryInsert(withBirthDate);
+                      employeesCreated = created;
+                    } catch (e2) {
+                      throw insertErr;
+                    }
+                  } else {
+                    throw insertErr;
+                  }
+
+                  if (withoutBirthDate.length > 0) {
+                    toast({
+                      title: 'Alguns funcionários não foram cadastrados',
+                      description: 'Alguns passageiros não têm data de nascimento. Preencha a data de nascimento para cadastrar automaticamente.',
+                      variant: 'destructive',
+                    });
+                  }
+                }
               }
             }
           }} catch (e: any) {

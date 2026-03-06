@@ -63,8 +63,7 @@ const extractLastName = (fullName: string | undefined | null): string => {
 export function FlightCard({ flight, showSavings = true, viewMode = 'card', onDelete }: FlightCardProps) {
   const bookingAwareId = flight.bookingId ? `${flight.bookingId}:${flight.id}` : flight.id;
   const lastName = extractLastName(flight.passengerName);
-  const directLink = (flight as any).reservationUrl || (flight as any).reservation_url || (flight as any).qrUrl || (flight as any).qr_url || (flight as any).airlineReservationUrl || (flight as any).airline_reservation_url || "";
-  const reservationUrl = directLink || getAirlineReservationUrl(flight.airline, flight.locator, flight.originCode, lastName);
+  const reservationUrl = getAirlineReservationUrl(flight.airline, flight.locator, flight.originCode, lastName);
 
   const handleVerifyTicket = () => {
     window.open(reservationUrl, '_blank');

@@ -19,8 +19,6 @@ export interface Flight {
   pricePaid: number;
   priceAirline: number;
   checkedIn: boolean;
-  /** Link direto (QR code/Iddas) para gerenciar a reserva na companhia. */
-  reservationUrl?: string;
   type: 'outbound' | 'return' | 'internal';
 }
 
