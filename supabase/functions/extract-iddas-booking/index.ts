@@ -195,6 +195,40 @@ function extractReservedBy(pageText: string): string | null {
   return m?.[1]?.trim() || null;
 }
 
+function extractAirlineReservationLinks(doc: any): string[] {
+  try {
+    if (!doc) return [];
+
+    const anchors = doc.querySelectorAll?.("a[href]") || [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+
+    for (const a of anchors) {
+      const href = (a?.getAttribute?.("href") || "").toString().trim();
+      if (!href) continue;
+
+      const isLatam = /latamairlines\.com\//i.test(href);
+      const isGol = /voegol\.com\.br\//i.test(href);
+
+      if (!isLatam && !isGol) continue;
+
+      const looksLikeReservation =
+        /minhas-viagens\/(second-detail|encontrar-viagem)/i.test(href) ||
+        /minhas-viagens\?/i.test(href);
+
+      if (!looksLikeReservation) continue;
+      if (seen.has(href)) continue;
+      seen.add(href);
+      out.push(href);
+    }
+
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+
 type ExtractedFlight = {
   airline: string;
   flightNumber: string;
@@ -208,6 +242,7 @@ type ExtractedFlight = {
   arrivalTime: string;
   locator: string;
   passengerName: string;
+  reservationUrl?: string;
   type: "outbound" | "return" | "internal";
   stops: number;
   id: string;
@@ -1594,6 +1629,14 @@ const reservedBy = extractReservedBy(pageText);
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
     
     const flights = matchAllFlights(pageText, mainPassengerName);
+    const reservationLinks = extractAirlineReservationLinks(doc);
+    if (Array.isArray(reservationLinks) && reservationLinks.length) {
+      for (let i = 0; i < flights.length; i++) {
+        const link = reservationLinks[i];
+        if (link) flights[i].reservationUrl = link;
+      }
+    }
+
     // hotelsDom existed in some older revisions; keep it as an empty array here
     // to avoid runtime crashes when only the text-based extractor is used.
     const hotelsDom: ExtractedHotel[] = [];
