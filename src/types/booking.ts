@@ -4,6 +4,8 @@ export interface Flight {
   locator: string;
   purchaseNumber: string;
   airline: 'LATAM' | 'GOL' | 'AZUL';
+  // Direct link to airline reservation (usually extracted from the Iddas QR-code).
+  reservationUrl?: string;
   flightNumber: string;
   origin: string;
   originCode: string;

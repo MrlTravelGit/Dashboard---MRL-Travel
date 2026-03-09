@@ -211,7 +211,42 @@ type ExtractedFlight = {
   type: "outbound" | "return" | "internal";
   stops: number;
   id: string;
+  reservationUrl?: string;
 };
+
+// Try to capture airline reservation links embedded in the Iddas page (often used in QR codes).
+// We keep it heuristic-based and safe (returns []).
+function extractAirlineReservationLinks(doc: any): string[] {
+  try {
+    if (!doc) return [];
+
+    const anchors = doc.querySelectorAll?.("a[href]") || [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+
+    for (const a of anchors) {
+      const href = (a?.getAttribute?.("href") || "").toString().trim();
+      if (!href) continue;
+
+      const isLatam = /latamairlines\.com\//i.test(href);
+      const isGol = /voegol\.com\.br\//i.test(href);
+      if (!isLatam && !isGol) continue;
+
+      const looksLikeReservation =
+        /minhas-viagens\/(second-detail|encontrar-viagem)/i.test(href) ||
+        /minhas-viagens\?/i.test(href);
+      if (!looksLikeReservation) continue;
+
+      if (seen.has(href)) continue;
+      seen.add(href);
+      out.push(href);
+    }
+
+    return out;
+  } catch {
+    return [];
+  }
+}
 
 function matchAllFlights(pageText: string, mainPassengerName: string): ExtractedFlight[] {
   const flights: ExtractedFlight[] = [];
@@ -1594,6 +1629,16 @@ const reservedBy = extractReservedBy(pageText);
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
     
     const flights = matchAllFlights(pageText, mainPassengerName);
+
+    // Map airline reservation links (from QR-code anchors) to flights in order.
+    // This improves the "Consultar Reserva" button accuracy for LATAM/GOL.
+    const airlineLinks = extractAirlineReservationLinks(doc);
+    if (airlineLinks.length > 0) {
+      for (let i = 0; i < flights.length; i++) {
+        const link = airlineLinks[i];
+        if (link) (flights[i] as any).reservationUrl = link;
+      }
+    }
     // hotelsDom existed in some older revisions; keep it as an empty array here
     // to avoid runtime crashes when only the text-based extractor is used.
     const hotelsDom: ExtractedHotel[] = [];
