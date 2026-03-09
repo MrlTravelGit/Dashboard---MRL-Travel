@@ -7,6 +7,7 @@ import { CarRentalCard } from '@/components/cards/CarRentalCard';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Loader2, ArrowLeft, ExternalLink, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -38,6 +39,11 @@ export default function BookingDetailsPage() {
   const [importing, setImporting] = useState(false);
   const [registeringEmployees, setRegisteringEmployees] = useState(false);
   const [booking, setBooking] = useState<BookingRow | null>(null);
+
+  const [missingBirthDialogOpen, setMissingBirthDialogOpen] = useState(false);
+  const [missingBirthPassengers, setMissingBirthPassengers] = useState<any[]>([]);
+  const [missingBirthEdits, setMissingBirthEdits] = useState<Record<string, string>>({});
+
 
   const [form, setForm] = useState({
     name: "",
@@ -104,7 +110,7 @@ export default function BookingDetailsPage() {
     return d.toISOString().slice(0, 10);
   };
 
-  const handleRegisterEmployeesFromBooking = async () => {
+  const handleRegisterEmployeesFromBooking = async (skipBirthPrompt = false) => {
     if (!booking?.company_id) return;
     const passengers = Array.isArray(booking.passengers) ? booking.passengers : [];
     if (passengers.length === 0) return;
@@ -143,6 +149,29 @@ export default function BookingDetailsPage() {
       if (payload.length === 0) {
         toast({ title: "Nada para cadastrar", description: "Nenhum passageiro válido encontrado para cadastrar como funcionário." });
         return;
+
+      if (!skipBirthPrompt) {
+        const missing = payload.filter((p: any) => !p.birth_date);
+        if (missing.length > 0) {
+          const edits: Record<string, string> = {};
+          missing.forEach((p: any) => {
+            const cpf = normalizeCpfDigits(p?.cpf || "");
+            if (cpf) edits[cpf] = "";
+          });
+
+          setMissingBirthPassengers(missing);
+          setMissingBirthEdits(edits);
+          setMissingBirthDialogOpen(true);
+
+          toast({
+            title: "Faltou data de nascimento",
+            description: "Preencha a data de nascimento para cadastrar estes passageiros em Funcionários.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
       }
 
       const cpfs = payload.map((p) => p.cpf);
@@ -209,6 +238,64 @@ export default function BookingDetailsPage() {
       setRegisteringEmployees(false);
     }
   };
+  const handleSaveMissingBirthDates = async () => {
+    if (!booking) return;
+
+    const sanitized: Record<string, string> = {};
+    Object.entries(missingBirthEdits).forEach(([cpfRaw, date]) => {
+      const cpf = normalizeCpfDigits(cpfRaw);
+      if (!cpf) return;
+      const iso = toISODate(date);
+      if (iso) sanitized[cpf] = iso;
+    });
+
+    const missingCpfs = missingBirthPassengers
+      .map((p: any) => normalizeCpfDigits(p?.cpf || ""))
+      .filter((c: string) => c.length === 11);
+
+    const stillMissing = missingCpfs.filter((cpf: string) => !sanitized[cpf]);
+    if (stillMissing.length > 0) {
+      toast({
+        title: "Preencha todas as datas",
+        description: "Para cadastrar em Funcionários, é necessário informar a data de nascimento dos passageiros que estão sem essa informação.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Atualiza passageiros no booking (persistência)
+      const currentPassengers = Array.isArray(booking.passengers) ? booking.passengers : [];
+      const updatedPassengers = currentPassengers.map((p: any) => {
+        const cpf = normalizeCpfDigits(p?.cpf || "");
+        if (cpf && sanitized[cpf]) {
+          return { ...p, birth_date: sanitized[cpf] };
+        }
+        return p;
+      });
+
+      const { error } = await supabase
+        .from("bookings")
+        .update({ passengers: updatedPassengers })
+        .eq("id", booking.id);
+
+      if (error) throw error;
+
+      setBooking((prev) => (prev ? { ...prev, passengers: updatedPassengers } : prev));
+      setMissingBirthDialogOpen(false);
+
+      // Reexecuta o cadastro, agora com datas preenchidas
+      await handleRegisterEmployeesFromBooking(true);
+    } catch (e: any) {
+      toast({
+        title: "Erro ao salvar datas de nascimento",
+        description: e?.message || "Não foi possível salvar as datas de nascimento.",
+        variant: "destructive",
+      });
+    }
+  };
+
+
 
   const parseOptionalNumber = (value: string) => {
     const trimmed = value.trim();
@@ -509,7 +596,7 @@ export default function BookingDetailsPage() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={handleRegisterEmployeesFromBooking}
+                        onClick={() => handleRegisterEmployeesFromBooking()}
                         disabled={registeringEmployees || !(booking?.passengers && booking.passengers.length > 0)}
                       >
                         {registeringEmployees ? (
@@ -526,6 +613,43 @@ export default function BookingDetailsPage() {
                       </Button>
                     ) : null}
                   </CardHeader>
+
+                  <Dialog open={missingBirthDialogOpen} onOpenChange={setMissingBirthDialogOpen}>
+                    <DialogContent className="max-w-lg">
+                      <DialogHeader>
+                        <DialogTitle>Completar datas de nascimento</DialogTitle>
+                      </DialogHeader>
+
+                      <div className="space-y-3">
+                        {missingBirthPassengers.map((p: any) => {
+                          const cpf = normalizeCpfDigits(p?.cpf || "");
+                          return (
+                            <div key={cpf || p.full_name} className="space-y-1">
+                              <div className="text-sm font-medium">{p.full_name}</div>
+                              <div className="text-xs text-muted-foreground">CPF: {cpf}</div>
+                              <Input
+                                type="date"
+                                value={missingBirthEdits[cpf] || ""}
+                                onChange={(e) =>
+                                  setMissingBirthEdits((prev) => ({ ...prev, [cpf]: e.target.value }))
+                                }
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setMissingBirthDialogOpen(false)}>
+                          Cancelar
+                        </Button>
+                        <Button type="button" onClick={handleSaveMissingBirthDates}>
+                          Salvar e cadastrar
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+
                   <CardContent>
                     <div className="space-y-2">
                       {booking.passengers.map((p: any, idx: number) => (
@@ -548,6 +672,43 @@ export default function BookingDetailsPage() {
                   <CardHeader>
                     <CardTitle>Hospedagem</CardTitle>
                   </CardHeader>
+
+                  <Dialog open={missingBirthDialogOpen} onOpenChange={setMissingBirthDialogOpen}>
+                    <DialogContent className="max-w-lg">
+                      <DialogHeader>
+                        <DialogTitle>Completar datas de nascimento</DialogTitle>
+                      </DialogHeader>
+
+                      <div className="space-y-3">
+                        {missingBirthPassengers.map((p: any) => {
+                          const cpf = normalizeCpfDigits(p?.cpf || "");
+                          return (
+                            <div key={cpf || p.full_name} className="space-y-1">
+                              <div className="text-sm font-medium">{p.full_name}</div>
+                              <div className="text-xs text-muted-foreground">CPF: {cpf}</div>
+                              <Input
+                                type="date"
+                                value={missingBirthEdits[cpf] || ""}
+                                onChange={(e) =>
+                                  setMissingBirthEdits((prev) => ({ ...prev, [cpf]: e.target.value }))
+                                }
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setMissingBirthDialogOpen(false)}>
+                          Cancelar
+                        </Button>
+                        <Button type="button" onClick={handleSaveMissingBirthDates}>
+                          Salvar e cadastrar
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+
                   <CardContent>
                     <div className="grid grid-cols-1 gap-4">
                       {booking.hotels.map((h: any) => (
@@ -564,6 +725,43 @@ export default function BookingDetailsPage() {
                   <CardHeader>
                     <CardTitle>Aluguel de carro</CardTitle>
                   </CardHeader>
+
+                  <Dialog open={missingBirthDialogOpen} onOpenChange={setMissingBirthDialogOpen}>
+                    <DialogContent className="max-w-lg">
+                      <DialogHeader>
+                        <DialogTitle>Completar datas de nascimento</DialogTitle>
+                      </DialogHeader>
+
+                      <div className="space-y-3">
+                        {missingBirthPassengers.map((p: any) => {
+                          const cpf = normalizeCpfDigits(p?.cpf || "");
+                          return (
+                            <div key={cpf || p.full_name} className="space-y-1">
+                              <div className="text-sm font-medium">{p.full_name}</div>
+                              <div className="text-xs text-muted-foreground">CPF: {cpf}</div>
+                              <Input
+                                type="date"
+                                value={missingBirthEdits[cpf] || ""}
+                                onChange={(e) =>
+                                  setMissingBirthEdits((prev) => ({ ...prev, [cpf]: e.target.value }))
+                                }
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setMissingBirthDialogOpen(false)}>
+                          Cancelar
+                        </Button>
+                        <Button type="button" onClick={handleSaveMissingBirthDates}>
+                          Salvar e cadastrar
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+
                   <CardContent>
                     <div className="grid grid-cols-1 gap-4">
                       {booking.car_rentals.map((c: any) => (
