@@ -44,6 +44,7 @@ export default function BookingsPage() {
   const [open, setOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'card' | 'landscape'>('card');
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('all');
   const [bookings, setBookings] = useState<BookingFromDB[]>([]);
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(true);
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
@@ -832,9 +833,11 @@ export default function BookingsPage() {
     }
   };
 
-  // Mostra todas para admin, ou só da empresa do usuário
+  // Admin pode filtrar por empresa. Para não-admin, mantemos o comportamento atual (RLS/links já limitam o acesso).
   const filteredBookings = bookings.filter(booking => {
-    return booking.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = booking.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCompany = !isAdmin || selectedCompanyId === 'all' || booking.company_id === selectedCompanyId;
+    return matchesSearch && matchesCompany;
   });
 
   const getCompanyName = (companyId?: string) => {
@@ -1237,15 +1240,33 @@ export default function BookingsPage() {
           </div>
         </div>
 
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar por título da reserva..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
+        {/* Filtros */}
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          {isAdmin ? (
+            <div className="w-full md:w-72">
+              <Select value={selectedCompanyId} onValueChange={setSelectedCompanyId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Filtrar por empresa" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as empresas</SelectItem>
+                  {companies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar por título da reserva..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10"
+            />
+          </div>
         </div>
 
         {/* Loading State */}

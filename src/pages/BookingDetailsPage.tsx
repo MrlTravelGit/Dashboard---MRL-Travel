@@ -7,7 +7,7 @@ import { CarRentalCard } from '@/components/cards/CarRentalCard';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, ArrowLeft, ExternalLink } from "lucide-react";
+import { Loader2, ArrowLeft, ExternalLink, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -36,6 +36,7 @@ export default function BookingDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [registeringEmployees, setRegisteringEmployees] = useState(false);
   const [booking, setBooking] = useState<BookingRow | null>(null);
 
   const [form, setForm] = useState({
@@ -79,6 +80,135 @@ export default function BookingDetailsPage() {
 
     load();
   }, [id, toast]);
+
+
+  const normalizeCpfDigits = (cpf?: string) => (cpf || '').replace(/\D/g, '');
+
+  const toISODate = (value: any): string | null => {
+    if (!value) return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+    const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (m) {
+      const dd = m[1];
+      const mm = m[2];
+      const yyyy = m[3];
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+  };
+
+  const handleRegisterEmployeesFromBooking = async () => {
+    if (!booking?.company_id) return;
+    const passengers = Array.isArray(booking.passengers) ? booking.passengers : [];
+    if (passengers.length === 0) return;
+
+    setRegisteringEmployees(true);
+    try {
+      const { data: userRes } = await supabase.auth.getUser();
+      const createdBy = userRes?.user?.id ?? null;
+
+      const unique = new Map<string, any>();
+
+      passengers.forEach((p: any) => {
+        const cpf = normalizeCpfDigits(p?.cpf || '');
+        const full_name = String(p?.name || '').trim();
+        if (!cpf || cpf.length !== 11 || !full_name) return;
+
+        const birth_date = toISODate(p?.birth_date || p?.birthDate || p?.nasc);
+        const phone = String(p?.phone || p?.tel || '').trim() || '';
+        const email = String(p?.email || '').trim() || null;
+
+        const key = `${booking.company_id}:${cpf}`;
+        if (!unique.has(key)) {
+          unique.set(key, {
+            company_id: booking.company_id,
+            cpf,
+            full_name,
+            birth_date,
+            phone,
+            email,
+            created_by: createdBy,
+          });
+        }
+      });
+
+      const payload = Array.from(unique.values());
+      if (payload.length === 0) {
+        toast({ title: "Nada para cadastrar", description: "Nenhum passageiro válido encontrado para cadastrar como funcionário." });
+        return;
+      }
+
+      const cpfs = payload.map((p) => p.cpf);
+      const { data: existing, error: existingErr } = await supabase
+        .from("employees")
+        .select("id, cpf")
+        .eq("company_id", booking.company_id)
+        .in("cpf", cpfs);
+
+      if (existingErr) throw existingErr;
+
+      const existingSet = new Set((existing || []).map((e: any) => normalizeCpfDigits(e.cpf)));
+      const toInsert = payload.filter((p) => !existingSet.has(normalizeCpfDigits(p.cpf)));
+
+      if (toInsert.length === 0) {
+        toast({ title: "Funcionários já cadastrados", description: "Todos os passageiros desta reserva já estão na aba de funcionários." });
+        return;
+      }
+
+      const tryInsert = async (rows: any[]) => {
+        const { data: inserted, error: insErr } = await supabase
+          .from("employees")
+          .insert(rows)
+          .select("id");
+        if (insErr) throw insErr;
+        return inserted?.length ?? 0;
+      };
+
+      let createdCount = 0;
+
+      try {
+        createdCount = await tryInsert(toInsert.map((r) => ({ ...r, birth_date: r.birth_date ?? null })));
+      } catch (insertErr: any) {
+        const withBirthDate = toInsert.filter((p: any) => !!p.birth_date);
+        const withoutBirthDate = toInsert.filter((p: any) => !p.birth_date);
+
+        if (withBirthDate.length > 0) {
+          createdCount = await tryInsert(withBirthDate);
+        } else {
+          throw insertErr;
+        }
+
+        if (withoutBirthDate.length > 0) {
+          toast({
+            title: "Alguns funcionários não foram cadastrados",
+            description: "Alguns passageiros não têm data de nascimento. Preencha a data de nascimento para cadastrar automaticamente.",
+            variant: "destructive",
+          });
+        }
+      }
+
+      toast({
+        title: "Funcionários cadastrados",
+        description: `${createdCount} funcionário(s) cadastrado(s) a partir desta reserva.`,
+      });
+    } catch (e: any) {
+      console.error(e);
+      toast({
+        title: "Erro ao cadastrar funcionários",
+        description: e?.message || "Não foi possível cadastrar funcionários.",
+        variant: "destructive",
+      });
+    } finally {
+      setRegisteringEmployees(false);
+    }
+  };
 
   const parseOptionalNumber = (value: string) => {
     const trimmed = value.trim();
@@ -372,8 +502,29 @@ export default function BookingDetailsPage() {
               {/* Passengers Section (from booking.passengers array) */}
               {booking?.passengers && booking.passengers.length > 0 ? (
                 <Card>
-                  <CardHeader>
+                  <CardHeader className="flex flex-row items-center justify-between gap-3">
                     <CardTitle>Passageiros</CardTitle>
+                    {isAdmin ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleRegisterEmployeesFromBooking}
+                        disabled={registeringEmployees || !(booking?.passengers && booking.passengers.length > 0)}
+                      >
+                        {registeringEmployees ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Cadastrando...
+                          </>
+                        ) : (
+                          <>
+                            <Users className="h-4 w-4 mr-2" />
+                            Cadastrar em Funcionários
+                          </>
+                        )}
+                      </Button>
+                    ) : null}
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-2">
