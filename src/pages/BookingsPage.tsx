@@ -44,7 +44,6 @@ export default function BookingsPage() {
   const [open, setOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'card' | 'landscape'>('card');
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('all');
   const [bookings, setBookings] = useState<BookingFromDB[]>([]);
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(true);
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
@@ -55,6 +54,7 @@ export default function BookingsPage() {
   // Edição manual de nomes quando o IDDAS não retorna o nome no HTML.
   // Chave preferida: CPF, fallback: índice.
   const [passengerNameEdits, setPassengerNameEdits] = useState<Record<string, string>>({});
+  const [passengerBirthEdits, setPassengerBirthEdits] = useState<Record<string, string>>({});
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [autoRegisterEmployees, setAutoRegisterEmployees] = useState(true);
   
@@ -603,7 +603,7 @@ export default function BookingsPage() {
         return {
           name: finalName,
           cpf: cpfDigits || (p.cpf ?? ''),
-          birthDate: toIsoDate(p.birthDate ?? p.birth_date ?? p.nasc ?? p.birth),
+          birthDate: toIsoDate(p.birthDate ?? p.birth_date ?? p.nasc ?? p.birth) ?? toIsoDate(passengerBirthEdits[editKey]),
           phone: (p.phone ?? '').toString(),
           email: p.email ?? null,
           passport: p.passport ?? null,
@@ -615,6 +615,29 @@ export default function BookingsPage() {
         toast({
           title: 'Nome obrigatório',
           description: 'Preencha o nome completo de todos os passageiros.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+
+      // Validação: se o nome foi preenchido manualmente, exigir data de nascimento
+      const missingBirthForManual = (extractedData.passengers || [])
+        .map((p: any, idx: number) => {
+          const extractedName = (p.name ?? "").trim();
+          const cpfDigits = (p.cpf ?? "").toString().replace(/\D/g, "");
+          const editKey = cpfDigits ? `cpf:${cpfDigits}` : `idx:${idx}`;
+          const editedName = (passengerNameEdits[editKey] ?? "").trim();
+          const usedManualName = !extractedName && !!editedName;
+          const birth = toIsoDate(p.birthDate ?? p.birth_date ?? p.nasc ?? p.birth) ?? toIsoDate(passengerBirthEdits[editKey]);
+          return usedManualName && !birth ? editedName : null;
+        })
+        .filter(Boolean) as string[];
+
+      if (missingBirthForManual.length > 0) {
+        toast({
+          title: 'Data de nascimento obrigatória',
+          description: 'Preencha a data de nascimento dos passageiros adicionados manualmente para cadastrá-los em Funcionários.',
           variant: 'destructive',
         });
         return;
@@ -833,11 +856,9 @@ export default function BookingsPage() {
     }
   };
 
-  // Admin pode filtrar por empresa. Para não-admin, mantemos o comportamento atual (RLS/links já limitam o acesso).
+  // Mostra todas para admin, ou só da empresa do usuário
   const filteredBookings = bookings.filter(booking => {
-    const matchesSearch = booking.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCompany = !isAdmin || selectedCompanyId === 'all' || booking.company_id === selectedCompanyId;
-    return matchesSearch && matchesCompany;
+    return booking.name.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
   const getCompanyName = (companyId?: string) => {
@@ -1155,6 +1176,15 @@ export default function BookingsPage() {
                                               placeholder="Digite o nome completo"
                                               className="h-8 text-xs"
                                             />
+                                            <Input
+                                              type="date"
+                                              value={passengerBirthEdits[editKey] ?? ""}
+                                              onChange={(e) => {
+                                                const v = e.target.value;
+                                                setPassengerBirthEdits(prev => ({ ...prev, [editKey]: v }));
+                                              }}
+                                              className="h-8 text-xs"
+                                            />
                                           </div>
                                         ) : (
                                           <div className="font-medium text-foreground">{displayName}</div>
@@ -1240,33 +1270,15 @@ export default function BookingsPage() {
           </div>
         </div>
 
-        {/* Filtros */}
-        <div className="flex flex-col gap-2 md:flex-row md:items-center">
-          {isAdmin ? (
-            <div className="w-full md:w-72">
-              <Select value={selectedCompanyId} onValueChange={setSelectedCompanyId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Filtrar por empresa" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas as empresas</SelectItem>
-                  {companies.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
-
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por título da reserva..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
-          </div>
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por título da reserva..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
         </div>
 
         {/* Loading State */}
