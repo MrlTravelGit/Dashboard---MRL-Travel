@@ -1369,14 +1369,21 @@ export default function BookingsPage() {
                                 for (const h of booking.hotels) if ((h as any).guestName) names.push((h as any).guestName);
                               }
                             }
-                            const display = names.slice(0, 3);
-                            const rest = Math.max(0, names.length - display.length);
-                            return (
-                              <>
-                                {display.join(', ')}{rest > 0 ? ` +${rest}` : ''}
-                              </>
-                            );
-                          })()}
+                            // Deduplicate while preserving order
+                            const unique: string[] = [];
+                            const seen = new Set<string>();
+                            for (const n of names) {
+                              const key = String(n).trim();
+                              if (!key) continue;
+                              if (seen.has(key)) continue;
+                              seen.add(key);
+                              unique.push(key);
+                            }
+
+                            // Show all passengers when available. If we only have a "primary" passenger, show it once.
+                            if (unique.length === 0) return <>-</>;
+                            return <>{unique.join(', ')}</>;
+})()}
                         </div>
                       </div>
                       
