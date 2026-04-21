@@ -1085,11 +1085,65 @@ export default function BookingsPage() {
                           </div>
                           
                           {extractedData.flights?.length > 0 && (
-                            <div className="text-xs space-y-1 mt-2">
+                            <div className="space-y-2 mt-2">
+                              <div className="text-xs font-medium text-foreground mb-1">Voos Identificados</div>
                               {extractedData.flights.map((f: any, i: number) => (
-                                <div key={i} className="flex items-center gap-2 text-muted-foreground">
-                                  <Plane className="h-3 w-3" />
-                                  <span>{f.airline} {f.flightNumber}: {f.origin} → {f.destination} ({f.departureDate})</span>
+                                <div key={i} className="rounded-lg border bg-background/60 p-3 text-xs">
+                                  {/* Cabeçalho: companhia + número + tipo + localizador */}
+                                  <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                                    <div className="flex items-center gap-2">
+                                      <Plane className="h-3 w-3 text-primary shrink-0" />
+                                      <span className="font-semibold text-foreground">
+                                        {f.airline}{f.flightNumber ? ` ${f.flightNumber}` : ''}
+                                      </span>
+                                      {f.type && (
+                                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${f.type === 'return' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
+                                          {f.type === 'return' ? 'Volta' : 'Ida'}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {f.locator && (
+                                      <span className="px-2 py-0.5 bg-muted rounded font-mono text-[10px] text-muted-foreground tracking-wider">
+                                        {f.locator}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {/* Linha de rota com horários */}
+                                  <div className="flex items-center gap-2">
+                                    {/* Partida */}
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-bold text-sm text-foreground leading-tight">
+                                        {f.departureTime || '—'}
+                                      </div>
+                                      <div className="font-medium text-foreground truncate">
+                                        {f.originCode || f.origin}
+                                      </div>
+                                      <div className="text-muted-foreground truncate text-[10px]">
+                                        {f.origin && f.originCode && f.origin !== f.originCode ? f.origin : ''}
+                                      </div>
+                                      <div className="text-muted-foreground text-[10px]">{f.departureDate || '—'}</div>
+                                    </div>
+                                    {/* Seta central */}
+                                    <div className="flex flex-col items-center gap-0.5 px-1 shrink-0">
+                                      <div className="w-12 h-px bg-border relative">
+                                        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-0 h-0 border-l-4 border-l-muted-foreground border-y-2 border-y-transparent" />
+                                      </div>
+                                      <span className="text-[10px] text-muted-foreground whitespace-nowrap">✈ direto</span>
+                                    </div>
+                                    {/* Chegada */}
+                                    <div className="flex-1 min-w-0 text-right">
+                                      <div className="font-bold text-sm text-foreground leading-tight">
+                                        {f.arrivalTime || '—'}
+                                      </div>
+                                      <div className="font-medium text-foreground truncate">
+                                        {f.destinationCode || f.destination}
+                                      </div>
+                                      <div className="text-muted-foreground truncate text-[10px]">
+                                        {f.destination && f.destinationCode && f.destination !== f.destinationCode ? f.destination : ''}
+                                      </div>
+                                      <div className="text-muted-foreground text-[10px]">{f.arrivalDate || f.departureDate || '—'}</div>
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>
