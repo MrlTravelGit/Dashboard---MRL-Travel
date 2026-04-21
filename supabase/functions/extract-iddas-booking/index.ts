@@ -83,31 +83,6 @@ function extractContext(text: string, needles: string[], radius: number): string
   const suffix = end < t.length ? "..." : "";
   return prefix + t.slice(start, end) + suffix;
 }
-
-// Extract a specific section from the page text using heading keywords.
-// This avoids mixing passenger DOB/CPF lines with flight cards.
-function extractSection(pageText: string, startKeywords: string[], endKeywords: string[]): string {
-  const t = pageText || "";
-  if (!t) return "";
-  const lower = t.toLowerCase();
-  const starts = startKeywords.map((k) => (k || "").toLowerCase()).filter(Boolean);
-  const ends = endKeywords.map((k) => (k || "").toLowerCase()).filter(Boolean);
-
-  let startIdx = -1;
-  for (const s of starts) {
-    const i = lower.indexOf(s);
-    if (i >= 0 && (startIdx < 0 || i < startIdx)) startIdx = i;
-  }
-  if (startIdx < 0) return "";
-
-  let endIdx = -1;
-  for (const e of ends) {
-    const i = lower.indexOf(e, startIdx + 1);
-    if (i >= 0 && (endIdx < 0 || i < endIdx)) endIdx = i;
-  }
-  const slice = endIdx > startIdx ? t.slice(startIdx, endIdx) : t.slice(startIdx);
-  return slice.trim();
-}
 // Build a text representation that preserves block boundaries.
 // doc.body.textContent often collapses everything into a single line, making
 // passenger extraction unreliable.
@@ -168,6 +143,78 @@ function extractTextWithNewlines(doc: any): string {
     return "";
   }
 }
+
+// Extrai somente o texto da seção de Transporte Aéreo (cards de voo), evitando misturar
+// passageiro/hotel/carro no mesmo texto e reduzindo falsos positivos (ex: data de Nasc).
+function extractFlightSectionText(doc: any): string {
+  try {
+    const body = doc?.body;
+    if (!body) return "";
+
+    // Os cards de voo no IDDAS normalmente usam Tailwind com rounded-2xl + bg-slate-50.
+    const cards = Array.from(body.querySelectorAll('div.rounded-2xl.bg-slate-50')) as any[];
+    const flightCards: any[] = [];
+
+    for (const el of cards) {
+      const t = (el?.textContent || '').replace(/\s+/g, ' ').trim();
+      // heurística mínima: presença de IATA e/ou 'Voo direto'
+      if (/\([A-Z]{3}\)/.test(t) && /Voo\s+direto|Transporte\s+A[ée]reo/i.test(t)) {
+        flightCards.push(el);
+      }
+    }
+
+    // Fallback: se não achou por classes, procura seções com o título
+    if (flightCards.length === 0) {
+      const allSections = Array.from(body.querySelectorAll('section, div')) as any[];
+      for (const el of allSections) {
+        const t = (el?.textContent || '').replace(/\s+/g, ' ').trim();
+        if (t.includes('Transporte Aéreo') && /\([A-Z]{3}\)/.test(t)) {
+          flightCards.push(el);
+        }
+      }
+    }
+
+    const isBlockTag = (tag: string) => {
+      const t = (tag || '').toLowerCase();
+      return ['p','div','section','article','li','ul','ol','table','tr','td','th','header','footer','main','h1','h2','h3','h4','h5','h6','br'].includes(t);
+    };
+
+    // Implementação TS para obter texto com quebras de linha (similar ao extractTextWithNewlines)
+    const elementToTextTS = (root: any) => {
+      let out = '';
+      const walk = (node: any) => {
+        if (!node) return;
+        const nt = node.nodeType;
+        if (nt === 3) {
+          const v = (node.nodeValue || '').replace(/\s+/g, ' ');
+          if (v.trim()) out += v;
+          return;
+        }
+        if (nt !== 1) return;
+        const tag = (node.tagName || '').toLowerCase();
+        if (tag === 'script' || tag === 'style' || tag === 'noscript') return;
+        if (tag === 'br') {
+          out += '\n';
+          return;
+        }
+        const children = Array.from(node.childNodes || []);
+        const beforeLen = out.length;
+        for (const c of children) walk(c);
+        if (isBlockTag(tag)) {
+          if (out.length > beforeLen) out += '\n';
+        }
+      };
+      walk(root);
+      return out;
+    };
+
+    const chunks = flightCards.map((c) => elementToTextTS(c)).join('\n');
+    return chunks || '';
+  } catch {
+    return '';
+  }
+}
+
 function parseMoneyBRL(text: string): number | null {
   const m = text.match(/R\$\s*([\d.]+,\d{2})/i);
   if (!m) return null;
@@ -310,24 +357,13 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
   // Padrões típicos que aparecem no texto do IDDAS
   const flightCodeRegex = /\b([A-Z]{2,3}\s?\d{3,4})\b/; // LA3053, G31239, AD 2472
   const flightNumberOnlyRegex = /\bVoo\b\s*(\d{3,4})\b/i;
-  const directRegex = /Voo\s+direto\s+([A-Z]{2,3}\s?\d{3,4})/i;
+  const directRegex = /Voo\s+direto\s+([A-Z]{2,3}\s?\d{3,4}|\d{3,4})/i;
   const cityIataRegex = /([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'.-]{2,})\s*\(([A-Z]{3})\)/g;
-  function cleanCityName(city: string) {
-    let c = (city || "").trim();
-    // Remove leading time artifacts like "08h" or stray "h" that can be captured near timestamps.
-    c = c.replace(/^\d{1,2}h\d{0,2}\s+/i, "");
-    c = c.replace(/^h\s+/i, "");
-    // Collapse spaces
-    c = c.replace(/\s+/g, " ").trim();
-    return c;
-  }
   function pickCityPairs(blockText: string) {
     const found: { city: string; code: string }[] = [];
     let mm: RegExpExecArray | null;
     while ((mm = cityIataRegex.exec(blockText)) !== null) {
-      const city = cleanCityName(mm[1]);
-      if (!city) continue;
-      found.push({ city, code: mm[2].trim() });
+      found.push({ city: mm[1].trim(), code: mm[2].trim() });
     }
     cityIataRegex.lastIndex = 0;
 
@@ -414,7 +450,9 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
     const airlineGuess = (inferAirline(blockText) as any) || lastAirline || "";
     if (airlineGuess) lastAirline = airlineGuess;
     const flightCode = normalizeFlightCode(code);
-    const flightNumber = flightCode ? flightCode.replace(/^[A-Z]{2,3}/, "") : (numOnly || "");
+    const flightNumber = flightCode
+      ? flightCode.replace(/^[A-Z]{2,3}/, "")
+      : (numOnly || (direct ? direct.replace(/\s+/g, "").replace(/^[A-Z]{2,3}/, "") : "") || "");
     const { origin, destination } = pickCityPairs(blockText);
     if (!origin || !destination) continue;
     const dt = pickDateTimes(blockText);
@@ -1577,15 +1615,8 @@ const reservedBy = extractReservedBy(pageText);
     // mainPassengerName is ALWAYS the first passenger real, otherwise empty
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
     
-    // IMPORTANT: flight parsing must not use the full page text because the page
-    // includes passenger DOB/CPF which can be misread as flight dates/numbers.
-    // We extract only the "Transporte Aéreo" section and parse flights from it.
-    const flightSection = extractSection(
-      pageText,
-      ["Transporte Aéreo", "Transporte Aereo"],
-      ["Hospedagem", "Hotel", "Aluguel de Carro", "Carro", "Serviços Adicionais", "Servicos Adicionais"],
-    );
-    const flights = matchAllFlights(flightSection || pageText, mainPassengerName);
+    const flightSectionText = extractFlightSectionText(doc);
+    const flights = matchAllFlights(flightSectionText || pageText, mainPassengerName);
     // Map airline reservation links (from QR-code anchors) to flights in order.
     // This improves the "Consultar Reserva" button accuracy for LATAM/GOL.
     const airlineLinks = extractAirlineReservationLinks(doc);
