@@ -249,10 +249,24 @@ function extractAirlineReservationLinks(doc: any): string[] {
 }
 
 function matchAllFlights(pageText: string, mainPassengerName: string): ExtractedFlight[] {
+  // Estratégia em camadas:
+  // 1) Tentativa por cabeçalho "Voo de X (ABC) para Y (DEF)" (variantes com/sem parênteses).
+  // 2) Fallback por blocos ao redor de "Voo direto XX1234" / "Voo XX1234" e padrões de data/hora + (IATA).
+  // Motivo: o IDDAS muda com frequência o texto do cabeçalho e a estrutura visual.
+
   const flights: ExtractedFlight[] = [];
 
+  const normalized = (pageText || "")
+    .replace(/ /g, " ")
+    .replace(/[​-‍﻿]/g, "")
+    .replace(//g, "")
+    .trim();
+
+  // ---------------------------
+  // Camada 1: cabeçalho clássico
+  // ---------------------------
   const headerRegex =
-    /Voo de\s+(.+?)\s+\(([A-Z]{3})\)\s+para\s+(.+?)\s+\(([A-Z]{3})\)/g;
+    /Voo de\s+(.+?)\s*(?:\(|\s)([A-Z]{3})(?:\)|\s)\s+para\s+(.+?)\s*(?:\(|\s)([A-Z]{3})(?:\)|\s)/g;
 
   const indices: {
     start: number;
@@ -263,7 +277,7 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
   }[] = [];
 
   let mh: RegExpExecArray | null;
-  while ((mh = headerRegex.exec(pageText)) !== null) {
+  while ((mh = headerRegex.exec(normalized)) !== null) {
     indices.push({
       start: mh.index,
       origin: mh[1].trim(),
@@ -277,16 +291,16 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
 
   for (let i = 0; i < indices.length; i++) {
     const start = indices[i].start;
-    const end = i + 1 < indices.length ? indices[i + 1].start : pageText.length;
-    const block = pageText.slice(start, end);
+    const end = i + 1 < indices.length ? indices[i + 1].start : normalized.length;
+    const block = normalized.slice(start, end);
 
-    const dep = block.match(/Partida\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}h\d{2})/i);
-    const arr = block.match(/Chegada\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}h\d{2})/i);
-    const voo = block.match(/Voo\s+(\d{3,4})/i);
+    const dep = block.match(/Partida\s+([0-3]\d\/[0-1]\d\/\d{4})\s+(\d{2}h\d{2}|\d{2}h)/i);
+    const arr = block.match(/Chegada\s+([0-3]\d\/[0-1]\d\/\d{4})\s+(\d{2}h\d{2}|\d{2}h)/i);
+    const voo = block.match(/Voo\s+(\d{3,4})/i);
 
     const loc =
-      block.match(/Localizador\s+([A-Z0-9]{5,8})/i)?.[1] ||
-      block.match(/\b[A-Z0-9]{5,8}\b/)?.[0] ||
+      block.match(/Localizador\s+([A-Z0-9]{5,14})/i)?.[1] ||
+      block.match(/[A-Z0-9]{6,14}/)?.[0] ||
       "";
 
     let airline = inferAirline(block) as any;
@@ -294,9 +308,7 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
     if (airline) lastAirline = airline;
 
     const passengerName = mainPassengerName || "";
-
     const type: "outbound" | "return" = i === 0 ? "outbound" : "return";
-
     const id = `${loc || "NOLOC"}:${voo?.[1] || "NOVOO"}:${i}`;
 
     flights.push({
@@ -313,12 +325,173 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
       locator: loc,
       passengerName,
       type,
-      stops: block.match(/Voo direto/i) ? 0 : 0,
+      stops: /Voo direto/i.test(block) ? 0 : 0,
       id,
     });
   }
 
-  return flights;
+  if (flights.length > 0) return flights;
+
+  // -------------------------------------------
+  // Camada 2: fallback por blocos (mais robusto)
+  // -------------------------------------------
+  const lines = normalized.split(/
++/).map((l) => l.trim()).filter(Boolean);
+
+  // Padrões típicos que aparecem no texto do IDDAS
+  const flightCodeRegex = /([A-Z]{2,3}\s?\d{3,4})/; // LA3053, G31239, AD 2472
+  const flightNumberOnlyRegex = /Voo\s*(\d{3,4})/i;
+  const directRegex = /Voo\s+direto\s+([A-Z]{2,3}\s?\d{3,4})/i;
+
+  const cityIataRegex = /([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'.-]{2,})\s*\(([A-Z]{3})\)/g;
+
+  function pickCityPairs(blockText: string) {
+    const found: { city: string; code: string }[] = [];
+    let mm: RegExpExecArray | null;
+    while ((mm = cityIataRegex.exec(blockText)) !== null) {
+      found.push({ city: mm[1].trim(), code: mm[2].trim() });
+    }
+    cityIataRegex.lastIndex = 0;
+    if (found.length >= 2) {
+      return { origin: found[0], destination: found[found.length - 1] };
+    }
+    return { origin: null as any, destination: null as any };
+  }
+
+  function pickDateTimes(blockText: string) {
+    const dates = Array.from(blockText.matchAll(/([0-3]\d\/[0-1]\d\/\d{4})/g)).map((m) => m[1]);
+    const times = Array.from(blockText.matchAll(/(\d{2}h\d{2}|\d{2}h)/g)).map((m) => m[1]);
+
+    return {
+      depDate: dates[0] || "",
+      arrDate: dates[1] || dates[0] || "",
+      depTime: times[0] || "",
+      arrTime: times[1] || "",
+    };
+  }
+
+  function pickLocator(blockText: string) {
+    return (
+      blockText.match(/Localizador\s*[:\s]*([A-Z0-9]{5,14})/i)?.[1] ||
+      blockText.match(/[A-Z0-9]{10,14}/)?.[0] || // ex: LA9576941GESM
+      blockText.match(/[A-Z0-9]{6,9}/)?.[0] ||
+      ""
+    );
+  }
+
+  function normalizeFlightCode(code: string) {
+    return (code || "").replace(/\s+/g, "").toUpperCase();
+  }
+
+  const candidates: ExtractedFlight[] = [];
+  const seenKey = new Set<string>();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // gatilho: linha com "Voo direto ..." ou com um código tipo LA3053 ou com "Voo 3053"
+    const direct = line.match(directRegex)?.[1] || "";
+    const code = direct || line.match(flightCodeRegex)?.[1] || "";
+    const numOnly = !code ? line.match(flightNumberOnlyRegex)?.[1] || "" : "";
+    const hasTrigger = !!(direct || code || numOnly);
+
+    if (!hasTrigger) continue;
+
+    const from = Math.max(0, i - 18);
+    const to = Math.min(lines.length, i + 20);
+    const blockText = lines.slice(from, to).join("
+");
+
+    const airlineGuess = (inferAirline(blockText) as any) || lastAirline || "";
+    if (airlineGuess) lastAirline = airlineGuess;
+
+    const flightCode = normalizeFlightCode(code);
+    const flightNumber = flightCode ? flightCode.replace(/^[A-Z]{2,3}/, "") : (numOnly || "");
+
+    const { origin, destination } = pickCityPairs(blockText);
+    if (!origin || !destination) continue;
+
+    const dt = pickDateTimes(blockText);
+    const locator = pickLocator(blockText);
+
+    const type: "outbound" | "return" =
+      /Volta|Retorno/i.test(blockText) ? "return" :
+      /Ida/i.test(blockText) ? "outbound" :
+      candidates.length === 0 ? "outbound" : "return";
+
+    const key = `${locator}|${origin.code}|${destination.code}|${dt.depDate}|${flightNumber}`;
+    if (seenKey.has(key)) continue;
+    seenKey.add(key);
+
+    candidates.push({
+      airline: airlineGuess,
+      flightNumber,
+      origin: origin.city,
+      originCode: origin.code,
+      destination: destination.city,
+      destinationCode: destination.code,
+      departureDate: dt.depDate,
+      departureTime: dt.depTime,
+      arrivalDate: dt.arrDate,
+      arrivalTime: dt.arrTime,
+      locator,
+      passengerName: mainPassengerName || "",
+      type,
+      stops: /Voo direto/i.test(blockText) ? 0 : 0,
+      id: `${locator || "NOLOC"}:${flightNumber || "NOVOO"}:${candidates.length}`,
+    });
+  }
+
+  // Último fallback: janela por ocorrências de IATA + data
+  if (candidates.length === 0) {
+    const joined = lines.join("
+");
+    const rxIata = /\([A-Z]{3}\)/g;
+    const idxs: number[] = [];
+    let mi: RegExpExecArray | null;
+    while ((mi = rxIata.exec(joined)) !== null) idxs.push(mi.index);
+
+    for (let k = 0; k < idxs.length; k++) {
+      const a = idxs[k];
+      const window = joined.slice(Math.max(0, a - 600), Math.min(joined.length, a + 1200));
+      const { origin, destination } = pickCityPairs(window);
+      if (!origin || !destination) continue;
+
+      const dt = pickDateTimes(window);
+      if (!dt.depDate) continue;
+
+      const locator = pickLocator(window);
+      const code = window.match(directRegex)?.[1] || window.match(flightCodeRegex)?.[1] || "";
+      const flightNumber = code ? normalizeFlightCode(code).replace(/^[A-Z]{2,3}/, "") : (window.match(flightNumberOnlyRegex)?.[1] || "");
+
+      const airlineGuess = (inferAirline(window) as any) || lastAirline || "";
+      if (airlineGuess) lastAirline = airlineGuess;
+
+      const key = `${locator}|${origin.code}|${destination.code}|${dt.depDate}|${flightNumber}`;
+      if (seenKey.has(key)) continue;
+      seenKey.add(key);
+
+      candidates.push({
+        airline: airlineGuess,
+        flightNumber,
+        origin: origin.city,
+        originCode: origin.code,
+        destination: destination.city,
+        destinationCode: destination.code,
+        departureDate: dt.depDate,
+        departureTime: dt.depTime,
+        arrivalDate: dt.arrDate,
+        arrivalTime: dt.arrTime,
+        locator,
+        passengerName: mainPassengerName || "",
+        type: candidates.length === 0 ? "outbound" : "return",
+        stops: /Voo direto/i.test(window) ? 0 : 0,
+        id: `${locator || "NOLOC"}:${flightNumber || "NOVOO"}:${candidates.length}`,
+      });
+    }
+  }
+
+  return candidates;
 }
 
 type Passenger = {
