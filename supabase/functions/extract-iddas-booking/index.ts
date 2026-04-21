@@ -216,7 +216,7 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
   const normalized = (pageText || "")
     .replace(/ /g, " ")
     .replace(/[​-‍﻿]/g, "")
-    .replace(/\r?\n/g, "")
+    .replace(/\r/g, "")
     .trim();
   // ---------------------------
   // Camada 1: cabeçalho clássico
@@ -294,17 +294,59 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
       found.push({ city: mm[1].trim(), code: mm[2].trim() });
     }
     cityIataRegex.lastIndex = 0;
-    if (found.length >= 2) {
-      return { origin: found[0], destination: found[found.length - 1] };
+
+    // Precisamos de pelo menos 2 IATAs diferentes para montar um voo
+    const first = found[0];
+    if (!first) return { origin: null as any, destination: null as any };
+
+    let lastDistinct: { city: string; code: string } | null = null;
+    for (let i = found.length - 1; i >= 0; i--) {
+      if (found[i].code !== first.code) {
+        lastDistinct = found[i];
+        break;
+      }
     }
-    return { origin: null as any, destination: null as any };
+    if (!lastDistinct) return { origin: null as any, destination: null as any };
+
+    return { origin: first, destination: lastDistinct };
   }
   function pickDateTimes(blockText: string) {
-    const dates = Array.from(blockText.matchAll(/\b([0-3]\d\/[0-1]\d\/\d{4})\b/g)).map((m) => m[1]);
+    const dateMatches = Array.from(blockText.matchAll(/\b([0-3]\d\/[0-1]\d\/\d{4})\b/g)).map((m) => ({
+      value: m[1],
+      index: (m as any).index ?? -1,
+    }));
+
+    // Filtra datas que claramente são de passageiro (Nasc, CPF, passaporte) e datas antigas (ex: 1973)
+    const filteredDates = dateMatches.filter((d) => {
+      const y = Number(d.value.slice(-4));
+      if (!Number.isFinite(y) || y < 2000) return false;
+      const ctx = blockText.slice(Math.max(0, d.index - 20), Math.min(blockText.length, d.index + 20)).toLowerCase();
+      if (ctx.includes("nasc") || ctx.includes("cpf") || ctx.includes("passaport")) return false;
+      return true;
+    });
+
+    const datesOnly = (filteredDates.length ? filteredDates : dateMatches.filter((d) => {
+      const y = Number(d.value.slice(-4));
+      return Number.isFinite(y) && y >= 2000;
+    })).map((d) => d.value);
+
+    // Escolhe a data mais frequente no bloco (no card de voo ela aparece 2x)
+    const counts = new Map<string, number>();
+    for (const dt of datesOnly) counts.set(dt, (counts.get(dt) || 0) + 1);
+    let bestDate = "";
+    let bestCount = 0;
+    for (const [dt, c] of counts.entries()) {
+      if (c > bestCount) {
+        bestCount = c;
+        bestDate = dt;
+      }
+    }
+
     const times = Array.from(blockText.matchAll(/\b(\d{2}h\d{2}|\d{2}h)\b/g)).map((m) => m[1]);
+
     return {
-      depDate: dates[0] || "",
-      arrDate: dates[1] || dates[0] || "",
+      depDate: bestDate || datesOnly[0] || "",
+      arrDate: bestDate || datesOnly[1] || datesOnly[0] || "",
       depTime: times[0] || "",
       arrTime: times[1] || "",
     };
@@ -340,6 +382,7 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
     const { origin, destination } = pickCityPairs(blockText);
     if (!origin || !destination) continue;
     const dt = pickDateTimes(blockText);
+    if (!dt.depDate) continue;
     const locator = pickLocator(blockText);
     const type: "outbound" | "return" =
       /\bVolta\b|\bRetorno\b/i.test(blockText) ? "return" :
