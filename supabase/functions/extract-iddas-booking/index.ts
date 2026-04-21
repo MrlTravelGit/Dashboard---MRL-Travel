@@ -324,10 +324,53 @@ function extractFlightsFromDom(doc: any, mainPassengerName: string, debugMode = 
         ? validDates[validDates.length - 1]
         : validDates[0];
 
-      // --- Extrai horários (padrão XXhYY ou XXh) ---
-      const timeMatches = Array.from(cardText.matchAll(/\b(\d{2}h\d{2}|\d{2}h)\b/g)).map(m => m[1]);
-      const departureTime = timeMatches[0] || '';
-      const arrivalTime = timeMatches[1] || '';
+      // --- Extrai horários usando a estrutura DOM do card ---
+      // O layout IDDAS usa um flex-row com 3 filhos:
+      //   [0] coluna esquerda: data + horário de PARTIDA + cidade origem
+      //   [1] coluna central:  duração + "Voo direto XXXX"   ← NÃO é horário real
+      //   [2] coluna direita:  data + horário de CHEGADA + cidade destino
+      // Estratégia: encontrar o div com o padrão flex que contém ambos os IATAs
+      // e extrair horários do primeiro e último filho, ignorando o filho central.
+      let departureTime = '';
+      let arrivalTime = '';
+      (() => {
+        // Procura o div flex-row pai que tem os dois IATAs (origem e destino)
+        const allDivs = Array.from(card.querySelectorAll('div') as any[]);
+        for (const d of allDivs) {
+          const cls = (d?.getAttribute?.('class') || '').toString();
+          // O contêiner flex tem "flex" e "items-center" e "gap-"
+          if (!/flex/.test(cls)) continue;
+          const children = Array.from(d.childNodes || []).filter(
+            (c: any) => c.nodeType === 1 && (c.tagName || '').toLowerCase() === 'div'
+          ) as any[];
+          if (children.length < 3) continue;
+          const leftText  = elText(children[0]);
+          const rightText = elText(children[children.length - 1]);
+          // Valida: filho esquerdo e direito devem conter IATA
+          if (!/\([A-Z]{3}\)/.test(leftText) || !/\([A-Z]{3}\)/.test(rightText)) continue;
+          // Extrai horário da coluna esquerda (partida) — primeiro match
+          const depM = leftText.match(/\b(\d{2}h\d{2}|\d{2}h)\b/);
+          if (depM) departureTime = depM[1];
+          // Extrai horário da coluna direita (chegada) — primeiro match
+          const arrM = rightText.match(/\b(\d{2}h\d{2}|\d{2}h)\b/);
+          if (arrM) arrivalTime = arrM[1];
+          break; // achou o contêiner correto
+        }
+        // Fallback: se não conseguiu pelo DOM, usa texto mas pula a duração
+        // (descarta horários que aparecem junto com "direto" ou "Voo")
+        if (!departureTime || !arrivalTime) {
+          const allTimes = Array.from(cardText.matchAll(/\b(\d{2}h\d{2}|\d{2}h)\b/g))
+            .map(m => ({ val: m[1], idx: (m as any).index ?? 0 }))
+            .filter(t => {
+              // Remove horário se estiver no contexto de duração (vizinho de "direto", "Voo", "h" isolado pequeno)
+              const ctx = cardText.slice(Math.max(0, t.idx - 40), t.idx + 40);
+              const isDuration = /direto|Voo\s+direto/i.test(ctx);
+              return !isDuration;
+            });
+          if (!departureTime && allTimes[0]) departureTime = allTimes[0].val;
+          if (!arrivalTime && allTimes[1]) arrivalTime = allTimes[1].val;
+        }
+      })();
 
       // --- Extrai número do voo ---
       // Suporta: "Voo direto 2474", "Voo direto LA3053", "Voo direto AD2474", número isolado no card
