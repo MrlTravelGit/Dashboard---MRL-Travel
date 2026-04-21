@@ -296,11 +296,11 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
 
     const dep = block.match(/Partida\s+([0-3]\d\/[0-1]\d\/\d{4})\s+(\d{2}h\d{2}|\d{2}h)/i);
     const arr = block.match(/Chegada\s+([0-3]\d\/[0-1]\d\/\d{4})\s+(\d{2}h\d{2}|\d{2}h)/i);
-    const voo = block.match(/Voo\s+(\d{3,4})/i);
+    const voo = block.match(/\bVoo\b\s+(\d{3,4})/i);
 
     const loc =
       block.match(/Localizador\s+([A-Z0-9]{5,14})/i)?.[1] ||
-      block.match(/[A-Z0-9]{6,14}/)?.[0] ||
+      block.match(/\b[A-Z0-9]{6,14}\b/)?.[0] ||
       "";
 
     let airline = inferAirline(block) as any;
@@ -335,12 +335,12 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
   // -------------------------------------------
   // Camada 2: fallback por blocos (mais robusto)
   // -------------------------------------------
-  const lines = normalized.split(/
-+/).map((l) => l.trim()).filter(Boolean);
+  // Quebra por linhas (regex corrigido)
+  const lines = normalized.split(/\n+/).map((l) => l.trim()).filter(Boolean);
 
   // Padrões típicos que aparecem no texto do IDDAS
-  const flightCodeRegex = /([A-Z]{2,3}\s?\d{3,4})/; // LA3053, G31239, AD 2472
-  const flightNumberOnlyRegex = /Voo\s*(\d{3,4})/i;
+  const flightCodeRegex = /\b([A-Z]{2,3}\s?\d{3,4})\b/; // LA3053, G31239, AD 2472
+  const flightNumberOnlyRegex = /\bVoo\b\s*(\d{3,4})\b/i;
   const directRegex = /Voo\s+direto\s+([A-Z]{2,3}\s?\d{3,4})/i;
 
   const cityIataRegex = /([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'.-]{2,})\s*\(([A-Z]{3})\)/g;
@@ -359,8 +359,8 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
   }
 
   function pickDateTimes(blockText: string) {
-    const dates = Array.from(blockText.matchAll(/([0-3]\d\/[0-1]\d\/\d{4})/g)).map((m) => m[1]);
-    const times = Array.from(blockText.matchAll(/(\d{2}h\d{2}|\d{2}h)/g)).map((m) => m[1]);
+    const dates = Array.from(blockText.matchAll(/\b([0-3]\d\/[0-1]\d\/\d{4})\b/g)).map((m) => m[1]);
+    const times = Array.from(blockText.matchAll(/\b(\d{2}h\d{2}|\d{2}h)\b/g)).map((m) => m[1]);
 
     return {
       depDate: dates[0] || "",
@@ -373,8 +373,8 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
   function pickLocator(blockText: string) {
     return (
       blockText.match(/Localizador\s*[:\s]*([A-Z0-9]{5,14})/i)?.[1] ||
-      blockText.match(/[A-Z0-9]{10,14}/)?.[0] || // ex: LA9576941GESM
-      blockText.match(/[A-Z0-9]{6,9}/)?.[0] ||
+      blockText.match(/\b[A-Z0-9]{10,14}\b/)?.[0] || // ex: LA9576941GESM
+      blockText.match(/\b[A-Z0-9]{6,9}\b/)?.[0] ||
       ""
     );
   }
@@ -415,8 +415,8 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
     const locator = pickLocator(blockText);
 
     const type: "outbound" | "return" =
-      /Volta|Retorno/i.test(blockText) ? "return" :
-      /Ida/i.test(blockText) ? "outbound" :
+      /\bVolta\b|\bRetorno\b/i.test(blockText) ? "return" :
+      /\bIda\b/i.test(blockText) ? "outbound" :
       candidates.length === 0 ? "outbound" : "return";
 
     const key = `${locator}|${origin.code}|${destination.code}|${dt.depDate}|${flightNumber}`;
