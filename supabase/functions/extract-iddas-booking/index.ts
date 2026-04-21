@@ -332,8 +332,7 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
     if (!hasTrigger) continue;
     const from = Math.max(0, i - 18);
     const to = Math.min(lines.length, i + 20);
-    const blockText = lines.slice(from, to).join("
-");
+    const blockText = lines.slice(from, to).join("\n");
     const airlineGuess = (inferAirline(blockText) as any) || lastAirline || "";
     if (airlineGuess) lastAirline = airlineGuess;
     const flightCode = normalizeFlightCode(code);
@@ -369,8 +368,7 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
   }
   // Último fallback: janela por ocorrências de IATA + data
   if (candidates.length === 0) {
-    const joined = lines.join("
-");
+    const joined = lines.join("\n");
     const rxIata = /\([A-Z]{3}\)/g;
     const idxs: number[] = [];
     let mi: RegExpExecArray | null;
