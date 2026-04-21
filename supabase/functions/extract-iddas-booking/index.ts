@@ -144,42 +144,262 @@ function extractTextWithNewlines(doc: any): string {
   }
 }
 
-// Extrai somente o texto da seção de Transporte Aéreo (cards de voo), evitando misturar
-// passageiro/hotel/carro no mesmo texto e reduzindo falsos positivos (ex: data de Nasc).
+// ---------------------------------------------------------------------------
+// NOVO PARSER DE VOOS POR DOM — versão card-by-card
+// ---------------------------------------------------------------------------
+// Estratégia:
+//   1. Encontra cada <section> que contém o título "Transporte Aéreo".
+//   2. Dentro de cada section, isola o card visual principal
+//      (div.rounded-2xl.bg-slate-50) que contém os IATAs e datas do voo.
+//   3. Extrai campos diretamente dos nós DOM, evitando misturar dados de
+//      passageiros, hotel ou carro.
+//   4. Valida: precisa de ≥ 2 IATAs distintos + ao menos uma data ≥ 2000.
+//   5. Retorna [] se não encontrar nada no novo layout → chamador usa
+//      matchAllFlights() como fallback (layout antigo).
+// ---------------------------------------------------------------------------
+
+function extractFlightsFromDom(doc: any, mainPassengerName: string, debugMode = false): ExtractedFlight[] {
+  try {
+    const body = doc?.body;
+    if (!body) return [];
+
+    // Helper: texto limpo de um elemento (sem scripts/styles)
+    const elText = (el: any): string => {
+      if (!el) return '';
+      const walk = (node: any): string => {
+        if (!node) return '';
+        if (node.nodeType === 3) return (node.nodeValue || '').replace(/\s+/g, ' ');
+        const tag = (node.tagName || '').toLowerCase();
+        if (tag === 'script' || tag === 'style' || tag === 'noscript') return '';
+        return Array.from(node.childNodes || []).map(walk).join('');
+      };
+      return walk(el).replace(/\s+/g, ' ').trim();
+    };
+
+    // Helper: texto inline de um nó (apenas filhos diretos de texto)
+    const directText = (el: any): string => {
+      let out = '';
+      for (const c of Array.from(el?.childNodes || [])) {
+        if ((c as any).nodeType === 3) out += (c as any).nodeValue || '';
+      }
+      return out.replace(/\s+/g, ' ').trim();
+    };
+
+    // Encontra seções de "Transporte Aéreo": pode ser <section> ou qualquer
+    // elemento que contenha esse texto em h2/p/div imediato.
+    const flightSections: any[] = [];
+    const allSections = Array.from(body.querySelectorAll('section') as any[]);
+    for (const sec of allSections) {
+      const t = elText(sec);
+      if (/Transporte\s+A[eé]reo/i.test(t) && /\([A-Z]{3}\)/.test(t)) {
+        flightSections.push(sec);
+      }
+    }
+
+    // Fallback: se não houver <section>, procurar em divs grandes
+    if (flightSections.length === 0) {
+      const allDivs = Array.from(body.querySelectorAll('div') as any[]);
+      for (const div of allDivs) {
+        const t = elText(div);
+        if (/Transporte\s+A[eé]reo/i.test(t) && /\([A-Z]{3}\)/.test(t)) {
+          // Evita aninhar: só adiciona se nenhum ancestral já foi adicionado
+          const alreadyIncluded = flightSections.some((s: any) => s.contains(div) || div.contains(s));
+          if (!alreadyIncluded) flightSections.push(div);
+        }
+      }
+    }
+
+    if (debugMode) {
+      console.log(`[extractFlightsFromDom] flight sections found: ${flightSections.length}`);
+    }
+
+    if (flightSections.length === 0) return [];
+
+    // --- Parse de cada seção ---
+    const results: ExtractedFlight[] = [];
+    const seenDedup = new Set<string>();
+
+    for (let si = 0; si < flightSections.length; si++) {
+      const sec = flightSections[si];
+      const secText = elText(sec);
+
+      // Detecta tipo (ida/volta) pelo subtítulo da section
+      const typeHint: 'outbound' | 'return' | 'unknown' =
+        /Voo de Volta/i.test(secText) ? 'return' :
+        /Voo de Ida/i.test(secText) ? 'outbound' :
+        'unknown';
+
+      // Detecta companhia aérea pela imagem alt ou src
+      let airline = '';
+      const imgs = Array.from(sec.querySelectorAll('img') as any[]);
+      for (const img of imgs) {
+        const src = ((img?.getAttribute?.('src') || '') + ' ' + (img?.getAttribute?.('alt') || '')).toUpperCase();
+        if (src.includes('AZUL')) { airline = 'AZUL'; break; }
+        if (src.includes('LATAM') || src.includes('/LA')) { airline = 'LATAM'; break; }
+        if (src.includes('GOL') || src.includes('/G3')) { airline = 'GOL'; break; }
+      }
+      if (!airline) airline = inferAirline(secText);
+
+      // Detecta localizador: badge com classe bg-blue-100 ou texto "Localizador"
+      let locator = '';
+      const badges = Array.from(sec.querySelectorAll('span') as any[]);
+      for (const b of badges) {
+        const cls = (b?.getAttribute?.('class') || '').toString();
+        if (/bg-blue-100|bg-blue-50/.test(cls)) {
+          const t = elText(b).trim();
+          if (/^[A-Z0-9]{5,10}$/.test(t)) { locator = t; break; }
+        }
+      }
+      if (!locator) {
+        const locM = secText.match(/Localizador\s*[:\s]*([A-Z0-9]{5,14})/i);
+        if (locM) locator = locM[1];
+      }
+
+      // Encontra o card visual principal do voo dentro da section
+      // (div.rounded-2xl.bg-slate-50 que tenha IATAs)
+      const cardCandidates = Array.from(sec.querySelectorAll('div') as any[]).filter((d: any) => {
+        const cls = (d?.getAttribute?.('class') || '').toString();
+        const t = elText(d);
+        return /rounded-2xl/.test(cls) && /bg-slate-50/.test(cls) && /\([A-Z]{3}\)/.test(t);
+      });
+
+      // Se não encontrou card específico, usa a própria section como card
+      const card = cardCandidates.length > 0 ? cardCandidates[0] : sec;
+      const cardText = elText(card);
+
+      if (debugMode) {
+        console.log(`[extractFlightsFromDom] section ${si}: type=${typeHint}, airline=${airline}, locator=${locator}`);
+        console.log(`[extractFlightsFromDom] cardText: ${cardText.slice(0, 300)}`);
+      }
+
+      // --- Extrai pares Cidade (IATA) ---
+      const cityIataRx = /([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'.\-]{1,}?)\s*\(([A-Z]{3})\)/g;
+      const pairs: { city: string; code: string }[] = [];
+      let cm: RegExpExecArray | null;
+      while ((cm = cityIataRx.exec(cardText)) !== null) {
+        const city = cm[1].trim();
+        const code = cm[2].trim();
+        // Filtra cidades claramente inválidas (ex: capturou lixo antes do IATA)
+        if (city.length > 1 && !/^\d+$/.test(city)) {
+          pairs.push({ city, code });
+        }
+      }
+
+      if (debugMode) {
+        console.log(`[extractFlightsFromDom] section ${si}: IATAs detected: ${pairs.map(p => p.code).join(',')}`);
+      }
+
+      // Precisa de pelo menos 2 IATAs diferentes
+      if (pairs.length < 2) continue;
+      const origin = pairs[0];
+      let dest: { city: string; code: string } | null = null;
+      for (let pi = pairs.length - 1; pi >= 0; pi--) {
+        if (pairs[pi].code !== origin.code) { dest = pairs[pi]; break; }
+      }
+      if (!dest) continue;
+
+      // --- Extrai datas — SOMENTE dentro do card do voo, jamais data de Nasc ---
+      // Busca datas brutas com ano >= 2020 e ignora contexto de nascimento/CPF
+      const rawDateMatches = Array.from(cardText.matchAll(/\b(\d{2}\/\d{2}\/(\d{4}))\b/g));
+      const validDates = rawDateMatches
+        .map(m => ({ val: m[1], year: Number(m[2]), idx: (m as any).index ?? 0 }))
+        .filter(d => {
+          if (d.year < 2020) return false; // Jamais datas antigas (nascimento é sempre < 2000s para adultos)
+          // Verifica contexto imediato no cardText
+          const ctx = cardText.slice(Math.max(0, d.idx - 30), d.idx + 30).toLowerCase();
+          if (/nasc|nascimento|cpf|passaport|rg\b/.test(ctx)) return false;
+          return true;
+        })
+        .map(d => d.val);
+
+      if (debugMode) {
+        console.log(`[extractFlightsFromDom] section ${si}: valid dates: ${validDates.join(', ')}`);
+      }
+
+      if (validDates.length === 0) continue;
+
+      // Data de partida = primeira data válida; chegada = última (se diferente)
+      const departureDate = validDates[0];
+      const arrivalDate = validDates[validDates.length - 1] !== departureDate
+        ? validDates[validDates.length - 1]
+        : validDates[0];
+
+      // --- Extrai horários (padrão XXhYY ou XXh) ---
+      const timeMatches = Array.from(cardText.matchAll(/\b(\d{2}h\d{2}|\d{2}h)\b/g)).map(m => m[1]);
+      const departureTime = timeMatches[0] || '';
+      const arrivalTime = timeMatches[1] || '';
+
+      // --- Extrai número do voo ---
+      // Suporta: "Voo direto 2474", "Voo direto LA3053", "Voo direto AD2474", número isolado no card
+      let flightNumber = '';
+      const directMatch = cardText.match(/Voo\s+direto\s+([A-Z]{0,3}\s?\d{3,4})/i);
+      if (directMatch) {
+        flightNumber = directMatch[1].replace(/\s+/g, '').replace(/^[A-Z]{1,3}(?=\d)/, '');
+        // Guarda o prefixo de companhia se airline ainda não encontrada
+        if (!airline) {
+          const pfx = directMatch[1].replace(/\s+/g, '').match(/^([A-Z]{2,3})\d/)?.[1];
+          if (pfx) airline = inferAirline(pfx) || pfx;
+        }
+      } else {
+        // Fallback: número isolado na linha "Voo direto\n1234"
+        const numM = cardText.match(/\bVoo\s+direto\s*\n?\s*(\d{3,4})\b/i)
+          || cardText.match(/\b(\d{4})\s*\n/);
+        if (numM) flightNumber = numM[1];
+      }
+
+      // --- Tipo da viagem (ida/volta) ---
+      const type: 'outbound' | 'return' =
+        typeHint !== 'unknown' ? typeHint :
+        results.length === 0 ? 'outbound' : 'return';
+
+      // --- Deduplicação ---
+      const dedupeKey = `${airline}|${flightNumber}|${departureDate}|${origin.code}|${dest.code}`;
+      if (seenDedup.has(dedupeKey)) {
+        if (debugMode) console.log(`[extractFlightsFromDom] deduped: ${dedupeKey}`);
+        continue;
+      }
+      seenDedup.add(dedupeKey);
+
+      results.push({
+        airline,
+        flightNumber,
+        origin: origin.city,
+        originCode: origin.code,
+        destination: dest.city,
+        destinationCode: dest.code,
+        departureDate,
+        departureTime,
+        arrivalDate,
+        arrivalTime,
+        locator,
+        passengerName: mainPassengerName || '',
+        type,
+        stops: 0,
+        id: `${locator || 'NOLOC'}:${flightNumber || 'NOVOO'}:${results.length}`,
+      });
+    }
+
+    if (debugMode) {
+      console.log(`[extractFlightsFromDom] total flights extracted: ${results.length}`);
+    }
+
+    return results;
+  } catch (e) {
+    console.error('[extractFlightsFromDom] error:', e);
+    return [];
+  }
+}
+
+// Mantida para compatibilidade interna (usada como fallback de texto para layouts antigos)
 function extractFlightSectionText(doc: any): string {
   try {
     const body = doc?.body;
     if (!body) return "";
 
-    // Os cards de voo no IDDAS normalmente usam Tailwind com rounded-2xl + bg-slate-50.
-    const cards = Array.from(body.querySelectorAll('div.rounded-2xl.bg-slate-50')) as any[];
-    const flightCards: any[] = [];
-
-    for (const el of cards) {
-      const t = (el?.textContent || '').replace(/\s+/g, ' ').trim();
-      // heurística mínima: presença de IATA e/ou 'Voo direto'
-      if (/\([A-Z]{3}\)/.test(t) && /Voo\s+direto|Transporte\s+A[ée]reo/i.test(t)) {
-        flightCards.push(el);
-      }
-    }
-
-    // Fallback: se não achou por classes, procura seções com o título
-    if (flightCards.length === 0) {
-      const allSections = Array.from(body.querySelectorAll('section, div')) as any[];
-      for (const el of allSections) {
-        const t = (el?.textContent || '').replace(/\s+/g, ' ').trim();
-        if (t.includes('Transporte Aéreo') && /\([A-Z]{3}\)/.test(t)) {
-          flightCards.push(el);
-        }
-      }
-    }
-
     const isBlockTag = (tag: string) => {
       const t = (tag || '').toLowerCase();
       return ['p','div','section','article','li','ul','ol','table','tr','td','th','header','footer','main','h1','h2','h3','h4','h5','h6','br'].includes(t);
     };
-
-    // Implementação TS para obter texto com quebras de linha (similar ao extractTextWithNewlines)
     const elementToTextTS = (root: any) => {
       let out = '';
       const walk = (node: any) => {
@@ -193,23 +413,27 @@ function extractFlightSectionText(doc: any): string {
         if (nt !== 1) return;
         const tag = (node.tagName || '').toLowerCase();
         if (tag === 'script' || tag === 'style' || tag === 'noscript') return;
-        if (tag === 'br') {
-          out += '\n';
-          return;
-        }
+        if (tag === 'br') { out += '\n'; return; }
         const children = Array.from(node.childNodes || []);
         const beforeLen = out.length;
         for (const c of children) walk(c);
-        if (isBlockTag(tag)) {
-          if (out.length > beforeLen) out += '\n';
-        }
+        if (isBlockTag(tag)) { if (out.length > beforeLen) out += '\n'; }
       };
       walk(root);
       return out;
     };
 
-    const chunks = flightCards.map((c) => elementToTextTS(c)).join('\n');
-    return chunks || '';
+    // Seções de "Transporte Aéreo" com IATAs
+    const secs: any[] = [];
+    for (const sec of Array.from(body.querySelectorAll('section, div') as any[])) {
+      const t = (sec?.textContent || '').replace(/\s+/g, ' ').trim();
+      if (/Transporte\s+A[eé]reo/i.test(t) && /\([A-Z]{3}\)/.test(t)) {
+        const alreadyIn = secs.some((s: any) => s.contains(sec) || sec.contains(s));
+        if (!alreadyIn) secs.push(sec);
+      }
+    }
+    if (secs.length === 0) return "";
+    return secs.map((s) => elementToTextTS(s)).join('\n');
   } catch {
     return '';
   }
@@ -1615,8 +1839,14 @@ const reservedBy = extractReservedBy(pageText);
     // mainPassengerName is ALWAYS the first passenger real, otherwise empty
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
     
-    const flightSectionText = extractFlightSectionText(doc);
-    const flights = matchAllFlights(flightSectionText || pageText, mainPassengerName);
+    // Camada primária: extração por DOM (layout novo IDDAS com cards visuais)
+    const debugFlights = new URL(req.url).searchParams.get('debug') === '1';
+    let flights = extractFlightsFromDom(doc, mainPassengerName, debugFlights);
+    // Fallback: se não extraiu nada pelo DOM, usa parser de texto (layouts antigos)
+    if (flights.length === 0) {
+      const flightSectionText = extractFlightSectionText(doc);
+      flights = matchAllFlights(flightSectionText || pageText, mainPassengerName);
+    }
     // Map airline reservation links (from QR-code anchors) to flights in order.
     // This improves the "Consultar Reserva" button accuracy for LATAM/GOL.
     const airlineLinks = extractAirlineReservationLinks(doc);
