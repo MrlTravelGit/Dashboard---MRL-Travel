@@ -83,6 +83,31 @@ function extractContext(text: string, needles: string[], radius: number): string
   const suffix = end < t.length ? "..." : "";
   return prefix + t.slice(start, end) + suffix;
 }
+
+// Extract a specific section from the page text using heading keywords.
+// This avoids mixing passenger DOB/CPF lines with flight cards.
+function extractSection(pageText: string, startKeywords: string[], endKeywords: string[]): string {
+  const t = pageText || "";
+  if (!t) return "";
+  const lower = t.toLowerCase();
+  const starts = startKeywords.map((k) => (k || "").toLowerCase()).filter(Boolean);
+  const ends = endKeywords.map((k) => (k || "").toLowerCase()).filter(Boolean);
+
+  let startIdx = -1;
+  for (const s of starts) {
+    const i = lower.indexOf(s);
+    if (i >= 0 && (startIdx < 0 || i < startIdx)) startIdx = i;
+  }
+  if (startIdx < 0) return "";
+
+  let endIdx = -1;
+  for (const e of ends) {
+    const i = lower.indexOf(e, startIdx + 1);
+    if (i >= 0 && (endIdx < 0 || i < endIdx)) endIdx = i;
+  }
+  const slice = endIdx > startIdx ? t.slice(startIdx, endIdx) : t.slice(startIdx);
+  return slice.trim();
+}
 // Build a text representation that preserves block boundaries.
 // doc.body.textContent often collapses everything into a single line, making
 // passenger extraction unreliable.
@@ -287,11 +312,22 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
   const flightNumberOnlyRegex = /\bVoo\b\s*(\d{3,4})\b/i;
   const directRegex = /Voo\s+direto\s+([A-Z]{2,3}\s?\d{3,4})/i;
   const cityIataRegex = /([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'.-]{2,})\s*\(([A-Z]{3})\)/g;
+  function cleanCityName(city: string) {
+    let c = (city || "").trim();
+    // Remove leading time artifacts like "08h" or stray "h" that can be captured near timestamps.
+    c = c.replace(/^\d{1,2}h\d{0,2}\s+/i, "");
+    c = c.replace(/^h\s+/i, "");
+    // Collapse spaces
+    c = c.replace(/\s+/g, " ").trim();
+    return c;
+  }
   function pickCityPairs(blockText: string) {
     const found: { city: string; code: string }[] = [];
     let mm: RegExpExecArray | null;
     while ((mm = cityIataRegex.exec(blockText)) !== null) {
-      found.push({ city: mm[1].trim(), code: mm[2].trim() });
+      const city = cleanCityName(mm[1]);
+      if (!city) continue;
+      found.push({ city, code: mm[2].trim() });
     }
     cityIataRegex.lastIndex = 0;
 
@@ -1541,7 +1577,15 @@ const reservedBy = extractReservedBy(pageText);
     // mainPassengerName is ALWAYS the first passenger real, otherwise empty
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
     
-    const flights = matchAllFlights(pageText, mainPassengerName);
+    // IMPORTANT: flight parsing must not use the full page text because the page
+    // includes passenger DOB/CPF which can be misread as flight dates/numbers.
+    // We extract only the "Transporte Aéreo" section and parse flights from it.
+    const flightSection = extractSection(
+      pageText,
+      ["Transporte Aéreo", "Transporte Aereo"],
+      ["Hospedagem", "Hotel", "Aluguel de Carro", "Carro", "Serviços Adicionais", "Servicos Adicionais"],
+    );
+    const flights = matchAllFlights(flightSection || pageText, mainPassengerName);
     // Map airline reservation links (from QR-code anchors) to flights in order.
     // This improves the "Consultar Reserva" button accuracy for LATAM/GOL.
     const airlineLinks = extractAirlineReservationLinks(doc);
