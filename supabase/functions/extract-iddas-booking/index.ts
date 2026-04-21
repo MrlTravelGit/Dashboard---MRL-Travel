@@ -1,7 +1,6 @@
 // Filtro de nomes rótulo e heurística de nome válido
 function isLabelName(raw: string) {
   const s = (raw || "").trim().toLowerCase();
-
   const blocked = new Set([
     "adultos", "adulto",
     "crianças", "criancas",
@@ -16,27 +15,20 @@ function isLabelName(raw: string) {
     "voo", "voos",
     "hospedagem", "hotel",
   ]);
-
   if (blocked.has(s)) return true;
-
   // também bloqueia casos tipo "Adultos (2)" ou "Passageiros: 2 Adultos"
   if (/^(adultos?|passageiros?)\b/.test(s)) return true;
-
   return false;
 }
-
 function isProbablyPersonName(name: string) {
   const n = (name || "").trim();
   if (!n) return false;
   if (isLabelName(n)) return false;
-
   // precisa ter letras
   if (!/[A-Za-zÀ-ÿ]/.test(n)) return false;
-
   // regra principal: 2+ palavras
   const parts = n.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return true;
-
   // fallback: 1 palavra só aceita se for "forte" e não genérica
   if (parts.length === 1) {
     const w = parts[0];
@@ -44,14 +36,12 @@ function isProbablyPersonName(name: string) {
     if (["adultos", "adulto", "passageiro", "passageiros"].includes(w.toLowerCase())) return false;
     return true;
   }
-
   return false;
 }
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
-
 function normalizeText(s: string) {
   return s
     .replace(/\u00a0/g, " ")
@@ -62,50 +52,37 @@ function normalizeText(s: string) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
-
 function maskSensitiveForDebug(s: string): string {
   let out = s || "";
-
   // Mask CPF formats like 000.000.000-00
   out = out.replace(/\b(\d{3})\.(\d{3})\.(\d{3})-(\d{2})\b/g, "***.***.***-$4");
-
   // Mask raw 11-digit sequences that likely represent CPF
   out = out.replace(/\b(\d{11})\b/g, (m) => `${m.slice(0, 3)}********`);
-
   // Mask emails (keep domain)
   out = out.replace(/[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})/gi, (_m, domain) => `***@${domain}`);
-
   // Mask phone numbers (keep last 2 digits)
   out = out.replace(/(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})/g, (m) => {
     const digits = m.replace(/\D/g, "");
     if (digits.length < 8) return "***";
     return `(**) *****-**${digits.slice(-2)}`;
   });
-
   return out;
 }
-
 function extractContext(text: string, needles: string[], radius: number): string {
   const t = text || "";
   if (!t) return "";
-
   let idx = -1;
   for (const n of needles) {
     const i = t.toLowerCase().indexOf((n || "").toLowerCase());
     if (i >= 0 && (idx < 0 || i < idx)) idx = i;
   }
-
   if (idx < 0) idx = 0;
-
   const start = Math.max(0, idx - radius);
   const end = Math.min(t.length, idx + radius);
-
   const prefix = start > 0 ? "..." : "";
   const suffix = end < t.length ? "..." : "";
   return prefix + t.slice(start, end) + suffix;
 }
-
-
 // Build a text representation that preserves block boundaries.
 // doc.body.textContent often collapses everything into a single line, making
 // passenger extraction unreliable.
@@ -113,7 +90,6 @@ function extractTextWithNewlines(doc: any): string {
   try {
     const body = doc?.body;
     if (!body) return "";
-
     const isBlockTag = (tag: string) => {
       const t = (tag || "").toLowerCase();
       return [
@@ -143,19 +119,15 @@ function extractTextWithNewlines(doc: any): string {
         "h6",
       ].includes(t);
     };
-
     let out = "";
-
     const walk = (node: any) => {
       if (!node) return;
       const nodeType = node.nodeType;
-
       // 3 = TEXT_NODE
       if (nodeType === 3) {
         out += String(node.nodeValue || "");
         return;
       }
-
       // 1 = ELEMENT_NODE
       if (nodeType === 1) {
         const tag = (node.tagName || "").toString();
@@ -165,14 +137,12 @@ function extractTextWithNewlines(doc: any): string {
         if (isBlockTag(tag)) out += "\n";
       }
     };
-
     walk(body);
     return out;
   } catch {
     return "";
   }
 }
-
 function parseMoneyBRL(text: string): number | null {
   const m = text.match(/R\$\s*([\d.]+,\d{2})/i);
   if (!m) return null;
@@ -180,7 +150,6 @@ function parseMoneyBRL(text: string): number | null {
   const n = Number(v);
   return Number.isNaN(n) ? null : n;
 }
-
 function inferAirline(block: string): "GOL" | "LATAM" | "AZUL" | "" {
   const b = block.toUpperCase();
   if (b.includes("GOL")) return "GOL";
@@ -188,13 +157,11 @@ function inferAirline(block: string): "GOL" | "LATAM" | "AZUL" | "" {
   if (b.includes("AZUL")) return "AZUL";
   return "";
 }
-
 // Extract "Reservado por" separately; should NOT be used as a passenger
 function extractReservedBy(pageText: string): string | null {
   const m = pageText.match(/Reservado por\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{5,})/i);
   return m?.[1]?.trim() || null;
 }
-
 type ExtractedFlight = {
   airline: string;
   flightNumber: string;
@@ -213,61 +180,49 @@ type ExtractedFlight = {
   id: string;
   reservationUrl?: string;
 };
-
 // Try to capture airline reservation links embedded in the Iddas page (often used in QR codes).
 // We keep it heuristic-based and safe (returns []).
 function extractAirlineReservationLinks(doc: any): string[] {
   try {
     if (!doc) return [];
-
     const anchors = doc.querySelectorAll?.("a[href]") || [];
     const out: string[] = [];
     const seen = new Set<string>();
-
     for (const a of anchors) {
       const href = (a?.getAttribute?.("href") || "").toString().trim();
       if (!href) continue;
-
       const isLatam = /latamairlines\.com\//i.test(href);
       const isGol = /voegol\.com\.br\//i.test(href);
       if (!isLatam && !isGol) continue;
-
       const looksLikeReservation =
         /minhas-viagens\/(second-detail|encontrar-viagem)/i.test(href) ||
         /minhas-viagens\?/i.test(href);
       if (!looksLikeReservation) continue;
-
       if (seen.has(href)) continue;
       seen.add(href);
       out.push(href);
     }
-
     return out;
   } catch {
     return [];
   }
 }
-
 function matchAllFlights(pageText: string, mainPassengerName: string): ExtractedFlight[] {
   // Estratégia em camadas:
   // 1) Tentativa por cabeçalho "Voo de X (ABC) para Y (DEF)" (variantes com/sem parênteses).
   // 2) Fallback por blocos ao redor de "Voo direto XX1234" / "Voo XX1234" e padrões de data/hora + (IATA).
   // Motivo: o IDDAS muda com frequência o texto do cabeçalho e a estrutura visual.
-
   const flights: ExtractedFlight[] = [];
-
   const normalized = (pageText || "")
     .replace(/ /g, " ")
     .replace(/[​-‍﻿]/g, "")
-    .replace(//g, "")
+    .replace(/\r?\n/g, "")
     .trim();
-
   // ---------------------------
   // Camada 1: cabeçalho clássico
   // ---------------------------
   const headerRegex =
     /Voo de\s+(.+?)\s*(?:\(|\s)([A-Z]{3})(?:\)|\s)\s+para\s+(.+?)\s*(?:\(|\s)([A-Z]{3})(?:\)|\s)/g;
-
   const indices: {
     start: number;
     origin: string;
@@ -275,7 +230,6 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
     destination: string;
     destinationCode: string;
   }[] = [];
-
   let mh: RegExpExecArray | null;
   while ((mh = headerRegex.exec(normalized)) !== null) {
     indices.push({
@@ -286,31 +240,24 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
       destinationCode: mh[4].trim(),
     });
   }
-
   let lastAirline: string = "";
-
   for (let i = 0; i < indices.length; i++) {
     const start = indices[i].start;
     const end = i + 1 < indices.length ? indices[i + 1].start : normalized.length;
     const block = normalized.slice(start, end);
-
     const dep = block.match(/Partida\s+([0-3]\d\/[0-1]\d\/\d{4})\s+(\d{2}h\d{2}|\d{2}h)/i);
     const arr = block.match(/Chegada\s+([0-3]\d\/[0-1]\d\/\d{4})\s+(\d{2}h\d{2}|\d{2}h)/i);
     const voo = block.match(/\bVoo\b\s+(\d{3,4})/i);
-
     const loc =
       block.match(/Localizador\s+([A-Z0-9]{5,14})/i)?.[1] ||
       block.match(/\b[A-Z0-9]{6,14}\b/)?.[0] ||
       "";
-
     let airline = inferAirline(block) as any;
     if (!airline && lastAirline) airline = lastAirline;
     if (airline) lastAirline = airline;
-
     const passengerName = mainPassengerName || "";
     const type: "outbound" | "return" = i === 0 ? "outbound" : "return";
     const id = `${loc || "NOLOC"}:${voo?.[1] || "NOVOO"}:${i}`;
-
     flights.push({
       airline,
       flightNumber: voo?.[1] || "",
@@ -329,22 +276,17 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
       id,
     });
   }
-
   if (flights.length > 0) return flights;
-
   // -------------------------------------------
   // Camada 2: fallback por blocos (mais robusto)
   // -------------------------------------------
   // Quebra por linhas (regex corrigido)
   const lines = normalized.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-
   // Padrões típicos que aparecem no texto do IDDAS
   const flightCodeRegex = /\b([A-Z]{2,3}\s?\d{3,4})\b/; // LA3053, G31239, AD 2472
   const flightNumberOnlyRegex = /\bVoo\b\s*(\d{3,4})\b/i;
   const directRegex = /Voo\s+direto\s+([A-Z]{2,3}\s?\d{3,4})/i;
-
   const cityIataRegex = /([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'.-]{2,})\s*\(([A-Z]{3})\)/g;
-
   function pickCityPairs(blockText: string) {
     const found: { city: string; code: string }[] = [];
     let mm: RegExpExecArray | null;
@@ -357,11 +299,9 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
     }
     return { origin: null as any, destination: null as any };
   }
-
   function pickDateTimes(blockText: string) {
     const dates = Array.from(blockText.matchAll(/\b([0-3]\d\/[0-1]\d\/\d{4})\b/g)).map((m) => m[1]);
     const times = Array.from(blockText.matchAll(/\b(\d{2}h\d{2}|\d{2}h)\b/g)).map((m) => m[1]);
-
     return {
       depDate: dates[0] || "",
       arrDate: dates[1] || dates[0] || "",
@@ -369,7 +309,6 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
       arrTime: times[1] || "",
     };
   }
-
   function pickLocator(blockText: string) {
     return (
       blockText.match(/Localizador\s*[:\s]*([A-Z0-9]{5,14})/i)?.[1] ||
@@ -378,51 +317,38 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
       ""
     );
   }
-
   function normalizeFlightCode(code: string) {
     return (code || "").replace(/\s+/g, "").toUpperCase();
   }
-
   const candidates: ExtractedFlight[] = [];
   const seenKey = new Set<string>();
-
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-
     // gatilho: linha com "Voo direto ..." ou com um código tipo LA3053 ou com "Voo 3053"
     const direct = line.match(directRegex)?.[1] || "";
     const code = direct || line.match(flightCodeRegex)?.[1] || "";
     const numOnly = !code ? line.match(flightNumberOnlyRegex)?.[1] || "" : "";
     const hasTrigger = !!(direct || code || numOnly);
-
     if (!hasTrigger) continue;
-
     const from = Math.max(0, i - 18);
     const to = Math.min(lines.length, i + 20);
     const blockText = lines.slice(from, to).join("
 ");
-
     const airlineGuess = (inferAirline(blockText) as any) || lastAirline || "";
     if (airlineGuess) lastAirline = airlineGuess;
-
     const flightCode = normalizeFlightCode(code);
     const flightNumber = flightCode ? flightCode.replace(/^[A-Z]{2,3}/, "") : (numOnly || "");
-
     const { origin, destination } = pickCityPairs(blockText);
     if (!origin || !destination) continue;
-
     const dt = pickDateTimes(blockText);
     const locator = pickLocator(blockText);
-
     const type: "outbound" | "return" =
       /\bVolta\b|\bRetorno\b/i.test(blockText) ? "return" :
       /\bIda\b/i.test(blockText) ? "outbound" :
       candidates.length === 0 ? "outbound" : "return";
-
     const key = `${locator}|${origin.code}|${destination.code}|${dt.depDate}|${flightNumber}`;
     if (seenKey.has(key)) continue;
     seenKey.add(key);
-
     candidates.push({
       airline: airlineGuess,
       flightNumber,
@@ -441,7 +367,6 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
       id: `${locator || "NOLOC"}:${flightNumber || "NOVOO"}:${candidates.length}`,
     });
   }
-
   // Último fallback: janela por ocorrências de IATA + data
   if (candidates.length === 0) {
     const joined = lines.join("
@@ -450,27 +375,21 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
     const idxs: number[] = [];
     let mi: RegExpExecArray | null;
     while ((mi = rxIata.exec(joined)) !== null) idxs.push(mi.index);
-
     for (let k = 0; k < idxs.length; k++) {
       const a = idxs[k];
       const window = joined.slice(Math.max(0, a - 600), Math.min(joined.length, a + 1200));
       const { origin, destination } = pickCityPairs(window);
       if (!origin || !destination) continue;
-
       const dt = pickDateTimes(window);
       if (!dt.depDate) continue;
-
       const locator = pickLocator(window);
       const code = window.match(directRegex)?.[1] || window.match(flightCodeRegex)?.[1] || "";
       const flightNumber = code ? normalizeFlightCode(code).replace(/^[A-Z]{2,3}/, "") : (window.match(flightNumberOnlyRegex)?.[1] || "");
-
       const airlineGuess = (inferAirline(window) as any) || lastAirline || "";
       if (airlineGuess) lastAirline = airlineGuess;
-
       const key = `${locator}|${origin.code}|${destination.code}|${dt.depDate}|${flightNumber}`;
       if (seenKey.has(key)) continue;
       seenKey.add(key);
-
       candidates.push({
         airline: airlineGuess,
         flightNumber,
@@ -490,10 +409,8 @@ function matchAllFlights(pageText: string, mainPassengerName: string): Extracted
       });
     }
   }
-
   return candidates;
 }
-
 type Passenger = {
   fullName: string;
   birthDate: string; // YYYY-MM-DD
@@ -503,23 +420,19 @@ type Passenger = {
   passport: string;
   passportExpiry: string;
 };
-
 function toISODateFromBR(dmy: string): string {
   const m = dmy.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!m) return "";
   return `${m[3]}-${m[2]}-${m[1]}`;
 }
-
 function cleanCpf(v: string): string {
   return (v || "").replace(/\D/g, "");
 }
-
 // Utility: normalize CPF to digits-only string
 function normalizeCPF(cpf: string): string {
   if (!cpf) return '';
   return cpf.replace(/\D/g, '');
 }
-
 // Utility: quick heuristics to detect company-like names
 function looksLikeCompanyName(name: string): boolean {
   if (!name) return false;
@@ -533,32 +446,24 @@ function looksLikeCompanyName(name: string): boolean {
   }
   return false;
 }
-
 function cleanSpacesLoose(s: string) {
   return (s || "").replace(/\s+/g, " ").trim();
 }
-
 // Remove tags like "(BR4BET)" at the end of a passenger name
 function sanitizePassengerName(name: string) {
   let n = cleanSpacesLoose(name);
-
   // Remove trailing tags like "(BR4BET)"
   n = n.replace(/\s*\(([A-Z0-9]{2,12})\)\s*$/i, "").trim();
-
   // Remove leading passenger-type labels that sometimes get concatenated to the name
   n = n.replace(/^(adultos?|adulto|crianças?|criancas?|criança|crianca|bebês?|bebes?|bebê|bebe|infantes?|infante)\s*[:\-]?\s+/i, "");
-
   // Remove leading email or domain fragments that may leak from parsing
   n = n.replace(/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\s+/i, "");
   n = n.replace(/^[a-z0-9.-]+\.(?:com|com\.br|net|org|br|io|gov)\s+/i, "");
-
   // Remove any embedded email token (keep email in its own field)
   n = n.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "");
-
   n = cleanSpacesLoose(n);
   return n;
 }
-
 function getExpectedPassengerCount(text: string): number | null {
   const m =
     text.match(/Passageiros\s*:\s*(\d+)/i) ||
@@ -568,13 +473,11 @@ function getExpectedPassengerCount(text: string): number | null {
   const v = Number(m[1]);
   return Number.isFinite(v) ? v : null;
 }
-
 // Name pattern that accepts connectors like "de", "da", "dos"
 const NAME_CONNECTORS = "(?:de|da|do|dos|das|e|d'|del|della|van|von|la|le)";
 const NAME_WORD = "\\p{Lu}[\\p{L}'’\\.\\-]{1,}";
 const NAME_PART = `(?:${NAME_WORD}|${NAME_CONNECTORS})`;
 const NAME_CAPTURE = `(${NAME_WORD}(?:\\s+${NAME_PART}){1,10})`;
-
 function bestNameFromContext(before: string) {
   const s = cleanSpacesLoose(before)
     .replace(/\bCPF\b[:\s]*/gi, " ")
@@ -583,19 +486,15 @@ function bestNameFromContext(before: string) {
     .replace(/\b\d{2}\/\d{2}\/\d{4}\b/g, " ")
     .replace(/[\s,;:]+/g, " ")
     .trim();
-
   const parts = s.split(" ").filter(Boolean);
-
   // Try long candidates first
   for (let take = 10; take >= 2; take--) {
     const cand = parts.slice(-take).join(" ");
     const c = sanitizePassengerName(cand);
     if (c && !looksLikeCompanyName(c) && isProbablyPersonName(c)) return c;
   }
-
   return "";
 }
-
 function birthNear(text: string) {
   // Only trust labeled birth dates here. Unlabeled dates near CPF often pick
   // travel/check-in dates and cause wrong outputs.
@@ -603,7 +502,6 @@ function birthNear(text: string) {
   if (m1) return m1[2];
   return "";
 }
-
 function extractBirthFromPassengerLine(line: string): string {
   const labeled = line.match(/\b(Nasc|Nascimento)\b[:\s]*([0-3]\d\/[0-1]\d\/\d{4})/i);
   if (labeled) return labeled[2];
@@ -611,39 +509,32 @@ function extractBirthFromPassengerLine(line: string): string {
   if (inline) return inline[1];
   return "";
 }
-
 function getLineAroundIndex(text: string, idx: number): string {
   const start = Math.max(0, text.lastIndexOf("\n", idx) + 1);
   let end = text.indexOf("\n", idx);
   if (end < 0) end = text.length;
   return text.slice(start, end).trim();
 }
-
 function htmlToText(html: string): string {
   const withoutScripts = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ");
-
   const withNewlines = withoutScripts
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(div|p|li|tr|table|section|article|header|footer|main|h\d)\s*>/gi, "\n")
     .replace(/<(div|p|li|tr|table|section|article|header|footer|main|h\d)\b[^>]*>/gi, "\n");
-
   const stripped = withNewlines.replace(/<[^>]+>/g, " ");
   return normalizeText(stripped);
 }
-
 function extractPassengers(pageText: string): Passenger[] {
   // Suporta 2 formatos:
   // 1) "NOME, dd/mm/aaaa, CPF xxx..."
   // 2) linha do NOME e abaixo linha "CPF: ... Nasc: ..."
-
   const text = pageText
     .replace(/\u00a0/g, " ")
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/\r/g, "")
     .trim();
-
   // tenta achar o começo do bloco de passageiros
   // Try to find a passenger section first. If not found, we still proceed with
   // a global CPF-based fallback (some layouts don't include the heading in textContent).
@@ -653,10 +544,8 @@ function extractPassengers(pageText: string): Passenger[] {
     text.match(/\bPassageiros\b/i) ||
     text.match(/\bViajantes\b/i) ||
     text.match(/\bPassageiro\(s\)\b/i);
-
   const startIdx = secMatch?.index ?? 0;
   const tailFull = text.slice(startIdx);
-
   // Restrict to the passenger block to avoid unrelated CPFs later in the page.
   // This also increases accuracy for pages where passengers appear before flights/hotel.
   const lower = tailFull.toLowerCase();
@@ -677,9 +566,7 @@ function extractPassengers(pageText: string): Passenger[] {
     if (i > -1 && i < endIdx) endIdx = i;
   }
   const tail = tailFull.slice(0, endIdx);
-
   const map = new Map<string, Passenger>();
-
   // Expected count (when present) helps decide when to run a stronger fallback.
   const expectedMatch =
     tailFull.match(/Passageiros\s*:\s*(\d+)/i) ||
@@ -687,7 +574,6 @@ function extractPassengers(pageText: string): Passenger[] {
     tail.match(/Passageiros\s*:\s*(\d+)/i) ||
     tail.match(/Passageiros[\s:]*\s*(\d+)\s*Adultos?/i);
   const expectedCount = expectedMatch ? Number(expectedMatch[1]) : null;
-
   // 0) High-recall pass: some IDDAS layouts collapse the whole reservation into
 // a single visual line. In those cases, relying on "\n" boundaries fails.
 // We first attempt global patterns over the passenger section.
@@ -695,10 +581,8 @@ function extractPassengers(pageText: string): Passenger[] {
   const upsert = (p: Passenger) => {
     const cpfDigits = normalizeCPF(p.cpf);
     if (cpfDigits.length !== 11) return;
-
     const incomingName = sanitizePassengerName(p.fullName || "");
     if (!incomingName || looksLikeCompanyName(incomingName) || isLabelName(incomingName)) return;
-
     const normalized: Passenger = {
       ...p,
       fullName: incomingName,
@@ -709,48 +593,38 @@ function extractPassengers(pageText: string): Passenger[] {
       passport: p.passport || "",
       passportExpiry: p.passportExpiry || "",
     };
-
     const existing = map.get(cpfDigits);
     if (!existing) {
       map.set(cpfDigits, normalized);
       return;
     }
-
     // Merge: prefer the more complete record
     const existingWords = cleanSpacesLoose(existing.fullName).split(/\s+/).filter(Boolean).length;
     const incomingWords = cleanSpacesLoose(normalized.fullName).split(/\s+/).filter(Boolean).length;
-
     if (incomingWords > existingWords && isProbablyPersonName(normalized.fullName)) {
       existing.fullName = normalized.fullName;
     }
-
     if (!existing.birthDate && normalized.birthDate) existing.birthDate = normalized.birthDate;
     if (!existing.phone && normalized.phone) existing.phone = normalized.phone;
     if (!existing.email && normalized.email) existing.email = normalized.email;
     if (!existing.passport && normalized.passport) existing.passport = normalized.passport;
     if (!existing.passportExpiry && normalized.passportExpiry) existing.passportExpiry = normalized.passportExpiry;
-
     map.set(cpfDigits, existing);
   };
-
   // Primary format: "NOME COMPLETO, dd/mm/aaaa, CPF 000.000.000-00, ... "
   const rePrimary = new RegExp(
     `${NAME_CAPTURE}\\s*,\\s*(\\d{2}\\/\\d{2}\\/\\d{4})\\s*,\\s*CPF\\s*([0-9.\\- ]{11,14})`,
     "giu",
   );
-
   const scanText = tailFull;
-
   let m1: RegExpExecArray | null;
   while ((m1 = rePrimary.exec(scanText)) !== null) {
     const name = (m1[1] || "").trim();
     const birth = (m1[2] || "").trim();
     const cpfDigits = normalizeCPF(m1[3] || "");
     const window = scanText.slice(m1.index, Math.min(scanText.length, m1.index + 420));
-
     const phoneMatch = window.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
     const emailMatch = window.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-
     upsert({
       fullName: name,
       birthDate: toISODateFromBR(birth) || "",
@@ -761,23 +635,19 @@ function extractPassengers(pageText: string): Passenger[] {
       passportExpiry: "",
     });
   }
-
   // Secondary format: "NOME ... CPF: ... Nasc: dd/mm/aaaa"
   const reSecondary = new RegExp(
     `${NAME_CAPTURE}[\\s\\S]{0,180}?\\bCPF\\b[:\\s]*([0-9.\\- ]{11,14})(?:[\\s\\S]{0,260}?\\bNasc\\b[:\\s]*(\\d{2}\\/\\d{2}\\/\\d{4}))?`,
     "giu",
   );
-
   let m2: RegExpExecArray | null;
   while ((m2 = reSecondary.exec(scanText)) !== null) {
     const name = (m2[1] || "").trim();
     const cpfDigits = normalizeCPF(m2[2] || "");
     const birth = (m2[3] || "").trim();
     const window = scanText.slice(m2.index, Math.min(scanText.length, m2.index + 460));
-
     const phoneMatch = window.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
     const emailMatch = window.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-
     upsert({
       fullName: name,
       birthDate: birth ? (toISODateFromBR(birth) || "") : "",
@@ -789,25 +659,20 @@ function extractPassengers(pageText: string): Passenger[] {
     });
   }
 }
-
 const lines = tail
     .split("\n")
     .map((l) => l.replace(/^[-•\u2022]+\s*/, "").trim())
     .filter(Boolean);
-
   // coletar linhas até começar outro bloco
   const passengerLines: string[] = [];
-
   // Some layouts render "Passageiros: X Adultos" and the first passenger on the same line.
   // Include line 0 if it already contains CPF data.
   if (lines[0] && /(\bCPF\b|\d{3}\.?(?:\d{3})\.?(?:\d{3})[-\s]?\d{2})/i.test(lines[0])) {
     passengerLines.push(lines[0]);
   }
-
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     if (!line) break;
-
     if (
       /^(Hotel|Hospedagem|Voo|Voos|Forma de pagamento|Localizador|Código:)/i.test(
         line
@@ -815,10 +680,8 @@ const lines = tail
     ) {
       break;
     }
-
     passengerLines.push(line);
   }
-
   // fallback: se não coletou nada, tenta pegar as primeiras linhas que tenham CPF
   if (passengerLines.length === 0) {
     const cpfLineRegex = /\bCPF\b|(\d{3}\.?\d{3}\.?\d{3}[-\s]?\d{2})/;
@@ -827,27 +690,21 @@ const lines = tail
       if (cpfLineRegex.test(line)) passengerLines.push(line);
     }
   }
-
   let pendingName = ""; // guarda nome quando vem em linha separada
-
   for (let i = 0; i < passengerLines.length; i++) {
     const raw = passengerLines[i];
     const line = raw.replace(/\s+/g, " ").trim();
-
     if (!line) continue;
-
     // ignora “Reservado por” e variações, e ignora empresas explícitas
     if (/^Reservado por\b/i.test(line)) {
       pendingName = "";
       continue;
     }
     // do not hardcode company names here; rely on looksLikeCompanyName() instead
-
     // se a linha parece só o nome (sem CPF), guarda e segue
     const hasCPF =
       /\bCPF\b/i.test(line) ||
       /(\d{3}\.?\d{3}\.?\d{3}[-\s]?\d{2})/.test(line);
-
     if (!hasCPF) {
       // pega nome antes de qualquer vírgula
       const nameOnly = line.split(",")[0]?.trim() ?? "";
@@ -856,42 +713,32 @@ const lines = tail
       }
       continue;
     }
-
     // extrai CPF
     const cpfMatch =
       line.match(/CPF[:\s]*([0-9.\- ]{11,14})/i) ||
       line.match(/(\d{3}\.?\d{3}\.?\d{3}[-\s]?\d{2})/);
-
     if (!cpfMatch) continue;
-
     const cpfDigits = normalizeCPF(cpfMatch[1] ?? cpfMatch[0]);
     if (cpfDigits.length !== 11) continue;
-
     // extrai nome: pode estar na própria linha antes da vírgula, ou na linha anterior (pendingName)
     let nameCandidate = "";
     const beforeCPF = line.split(/\bCPF\b/i)[0]?.trim() ?? "";
     const maybeInlineName = beforeCPF.split(",")[0]?.trim() ?? "";
-
     if (maybeInlineName && !/^CPF[:\s]*/i.test(maybeInlineName)) {
       nameCandidate = maybeInlineName;
     } else if (pendingName) {
       nameCandidate = pendingName;
     }
-
     pendingName = ""; // consumiu
-
     // telefone
     const phoneMatch = line.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
     const phone = phoneMatch ? phoneMatch[0].trim() : "";
-
     // email
     const emailMatch = line.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
     const email = emailMatch ? emailMatch[0].trim() : "";
-
     // data nascimento (somente quando for claramente nascimento)
     const birthRaw = extractBirthFromPassengerLine(line);
     const birthDate = birthRaw ? (toISODateFromBR(birthRaw) || "") : "";
-
     // Se não conseguimos um nome válido, ainda assim mantenha o CPF no mapa
     // quando a página indica que há mais passageiros do que capturamos.
     const safeName = sanitizePassengerName(nameCandidate || "");
@@ -916,13 +763,10 @@ const lines = tail
       }
       continue;
     }
-
     nameCandidate = safeName;
-
     // passaporte
     const passportMatch = line.match(/Passaporte[:\s]*([A-Z0-9-]+)/i);
     const passport = passportMatch ? passportMatch[1].trim() : "";
-
     const existing = map.get(cpfDigits);
     if (existing) {
       // Merge details when we see the same CPF again (common in inconsistent layouts)
@@ -936,7 +780,6 @@ const lines = tail
       map.set(cpfDigits, existing);
       continue;
     }
-
     map.set(cpfDigits, {
       fullName: nameCandidate,
       birthDate: birthDate || "",
@@ -947,7 +790,6 @@ const lines = tail
       passportExpiry: "",
     });
   }
-
   // Strong fallback: scan for CPF occurrences inside the passenger block and
   // infer the closest name before each CPF. We run this when:
   // - nothing was extracted, OR
@@ -956,7 +798,6 @@ const lines = tail
   // Alguns layouts colocam o bloco azul de passageiros antes de "Voo de ida" e
   // podem conter textos que fariam o recorte (tail) perder linhas.
   const fallbackText = (expectedCount !== null && map.size < expectedCount) ? tailFull : tail;
-
   if (map.size === 0 || (expectedCount !== null && map.size < expectedCount)) {
     // More tolerant CPF matcher: accepts any separators between digit groups.
     const cpfRe = /(\d{3}\D*\d{3}\D*\d{3}\D*\d{2})/g;
@@ -968,7 +809,6 @@ const lines = tail
       const before = fallbackText.slice(Math.max(0, idx - 1100), idx);
       const after = fallbackText.slice(idx, Math.min(fallbackText.length, idx + 420));
       const localLine = getLineAroundIndex(fallbackText, idx);
-
       // Try to read the exact "NOME, dd/mm/aaaa, CPF" pattern from the line.
       // This avoids picking "Adultos" or "Passageiros" as part of the name.
       const reLocal = new RegExp(
@@ -976,19 +816,14 @@ const lines = tail
         "iu",
       );
       const ml = localLine.match(reLocal);
-
       const rawName = ml ? (ml[1] || "") : bestNameFromContext(before);
       const rawBirth = ml ? (ml[2] || "") : birthNear(after);
       const birthDate = rawBirth ? (toISODateFromBR(rawBirth) || "") : "";
-
       const phoneMatch = after.match(/\(\d{2}\)\s*\d{4,5}-\d{4}|\b\d{10,11}\b/);
       const phone = phoneMatch ? phoneMatch[0].trim() : "";
-
       const emailMatch = after.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
       const email = emailMatch ? emailMatch[0].trim() : "";
-
       const nameCandidate = sanitizePassengerName(rawName);
-
       // Even if name is not found, keep CPF as placeholder when we expect more passengers.
       if (!nameCandidate || looksLikeCompanyName(nameCandidate) || !isProbablyPersonName(nameCandidate)) {
         if (expectedCount !== null) {
@@ -1011,7 +846,6 @@ const lines = tail
         }
         continue;
       }
-
       const existing = map.get(cpfDigits);
       if (existing) {
         if (!existing.fullName || existing.fullName.length < nameCandidate.length) {
@@ -1034,12 +868,10 @@ const lines = tail
       }
     }
   }
-
   // Pós-processamento: quando o nome veio como 1 palavra (ex: "Victor"),
   // tentar promover para nome completo usando o CPF como chave.
   // Isso melhora bastante a assertividade em alguns layouts do IDDAS.
   const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
   const cpfToFlexiblePattern = (cpfDigits: string) => {
     // Constrói um padrão que aceita pontuação e espaços entre os blocos do CPF
     // Ex: 12345678900 -> 123\D*456\D*789\D*00
@@ -1051,13 +883,10 @@ const lines = tail
     const e = d.slice(9, 11);
     return `${escapeRe(a)}\\D*${escapeRe(b)}\\D*${escapeRe(c)}\\D*${escapeRe(e)}`;
   };
-
   const improveText = tailFull;
-
   const findBestNameAndBirthByCpf = (cpfDigits: string) => {
     const cpfFlex = cpfToFlexiblePattern(cpfDigits);
     if (!cpfFlex) return { name: "", birth: "" };
-
         const patterns: RegExp[] = [
           // "NOME COMPLETO, dd/mm/aaaa, CPF xxx"
           new RegExp(
@@ -1075,37 +904,29 @@ const lines = tail
             "iu",
           ),
         ];
-
     let bestName = "";
     let bestBirth = "";
-
     for (const re of patterns) {
       const m = improveText.match(re);
       if (!m) continue;
       const name = (m[1] || "").trim();
       const birth = (m[2] || "").trim();
       if (!name || looksLikeCompanyName(name) || isLabelName(name)) continue;
-
       const wordCount = name.split(/\\s+/).filter(Boolean).length;
       const bestWordCount = bestName
         ? bestName.split(/\\s+/).filter(Boolean).length
         : 0;
-
       if (wordCount >= 2 && wordCount >= bestWordCount) {
         bestName = name;
         if (birth) bestBirth = birth;
       }
     }
-
     return { name: bestName, birth: bestBirth };
   };
-
   for (const [cpf, p] of map.entries()) {
     const currentName = (p.fullName || "").trim();
     const words = currentName.split(/\s+/).filter(Boolean);
-
     const improved = findBestNameAndBirthByCpf(cpf);
-
     // Se o nome atual está incompleto (poucas palavras), tente promover para um nome mais completo.
     if (improved.name) {
       const improvedWords = improved.name.split(/\s+/).filter(Boolean).length;
@@ -1114,17 +935,13 @@ const lines = tail
         p.fullName = improved.name;
       }
     }
-
     // Data de nascimento: só preenche se a extração encontrou um valor claro.
     if (!p.birthDate && improved.birth) {
       p.birthDate = toISODateFromBR(improved.birth) || "";
     }
   }
-
   return Array.from(map.values());
 }
-
-
 function parseDateBRToISO(dateBR: string): string | null {
   const m = dateBR.match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/);
   if (!m) return null;
@@ -1133,12 +950,10 @@ function parseDateBRToISO(dateBR: string): string | null {
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
   return `${yyyy}-${mm}-${dd}`;
 }
-
 function normalizeCpf(raw: string): string {
   const digits = (raw || '').replace(/\D/g, '');
   return digits.length >= 11 ? digits.slice(-11) : digits;
 }
-
 // DOM-based passenger extraction for IDDAS.
 // IMPORTANT: keep a single declaration. Deno Edge Runtime fails to boot if duplicated.
 type PassengerDomMeta = {
@@ -1153,9 +968,7 @@ type PassengerDomMeta = {
   };
   notes: string[];
 };
-
 type PassengerDomResult = { passengers: Passenger[]; meta: PassengerDomMeta };
-
 function extractPassengersFromDomWithMeta(doc: any): PassengerDomResult {
   const meta: PassengerDomMeta = {
     candidates: 0,
@@ -1164,43 +977,35 @@ function extractPassengersFromDomWithMeta(doc: any): PassengerDomResult {
     methodCounts: { pFs6: 0, pAll: 0, iconPerson: 0, spanFw: 0 },
     notes: [],
   };
-
   try {
     if (!doc?.querySelectorAll) {
       meta.notes.push("dom_missing");
       return { passengers: [], meta };
     }
-
     const pFs6 = Array.from(doc.querySelectorAll("p.fs-6") || []);
     const pAll = Array.from(doc.querySelectorAll("p") || []);
     const iconPerson = Array.from(doc.querySelectorAll("i.bi-person") || []);
     const spanFw = Array.from(doc.querySelectorAll("span.fw-semibold") || []);
-
     meta.methodCounts = {
       pFs6: pFs6.length,
       pAll: pAll.length,
       iconPerson: iconPerson.length,
       spanFw: spanFw.length,
     };
-
     const seen = new Set<any>();
     const candidates: any[] = [];
-
     const push = (el: any) => {
       if (!el || seen.has(el)) return;
       seen.add(el);
       candidates.push(el);
     };
-
     // 1) Most common layout: passenger lines are <p class="fs-6">...</p>
     for (const el of pFs6) push(el);
-
     // 2) Generic fallback: any <p> that contains CPF
     for (const el of pAll) {
       const txt = (el?.textContent || "").toString();
       if (/\bCPF\b/i.test(txt)) push(el);
     }
-
     // 3) Icon anchor: <i class="bi bi-person">, walk up to find a parent <p> or <li>
     const closestTag = (node: any, tags: string[]) => {
       let cur = node;
@@ -1212,35 +1017,27 @@ function extractPassengersFromDomWithMeta(doc: any): PassengerDomResult {
       }
       return null;
     };
-
     for (const icon of iconPerson) {
       const holder = closestTag(icon, ["p", "li", "div"]);
       if (holder) push(holder);
     }
-
     // 4) Span anchor: <span class="fw-semibold">NAME</span> and parent contains CPF
     for (const sp of spanFw) {
       const holder = closestTag(sp, ["p", "li", "div"]);
       const txt = (holder?.textContent || "").toString();
       if (holder && /\bCPF\b/i.test(txt)) push(holder);
     }
-
     meta.candidates = candidates.length;
-
     const byKey = new Map<string, Passenger>();
-
     const normalizeSpaces = (s: string) => (s || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
-
     const extractFromTextLine = (txt: string) => {
       const cleaned = normalizeSpaces(txt);
       const cpfMatch = cleaned.match(/\bCPF\s*([0-9.\-]{11,})/i);
       const birthMatch = cleaned.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
       const phoneMatch = cleaned.match(/(\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4})/);
       const emailMatch = cleaned.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-
       const cpf = normalizeCPF(cpfMatch?.[1] || "");
       const birthDate = birthMatch?.[1] ? (toISODateFromBR(birthMatch[1]) || "") : "";
-
       return {
         cpf: cpf && cpf.length === 11 ? cpf : "",
         birthDate,
@@ -1248,34 +1045,27 @@ function extractPassengersFromDomWithMeta(doc: any): PassengerDomResult {
         email: emailMatch?.[0] ? emailMatch[0].trim() : "",
       };
     };
-
     const makeKey = (p: Passenger) => {
       const cpfDigits = normalizeCPF(p.cpf);
       if (cpfDigits.length === 11) return `cpf:${cpfDigits}`;
-
       const name = sanitizePassengerName(p.fullName || "");
       const birth = (p.birthDate || "").trim();
       if (name && birth) return `namebirth:${name.toUpperCase()}|${birth}`;
       if (name) return `name:${name.toUpperCase()}`;
       return "";
     };
-
     for (const el of candidates) {
       const txtRaw = (el?.textContent || "").toString();
       const txt = normalizeSpaces(txtRaw);
-
       // Avoid mixing with other sections: require CPF or (strong name + birth date)
       const hasCpfWord = /\bCPF\b/i.test(txt);
       const hasBirth = /\b\d{2}\/\d{2}\/\d{4}\b/.test(txt);
-
       let fullName = "";
       const nameEl =
         el?.querySelector?.("span.fw-semibold") ||
         el?.querySelector?.("strong") ||
         null;
-
       fullName = normalizeSpaces(nameEl?.textContent || "");
-
       if (!fullName) {
         // Fallback: first chunk before comma often contains the name
         const first = normalizeSpaces(txt.split(",")[0] || "");
@@ -1283,16 +1073,12 @@ function extractPassengersFromDomWithMeta(doc: any): PassengerDomResult {
           fullName = first;
         }
       }
-
       if (!fullName) continue;
       if (!isProbablyPersonName(fullName) || looksLikeCompanyName(fullName) || isLabelName(fullName)) continue;
-
       // If it does not contain CPF and does not look like a passenger line, skip
       if (!hasCpfWord && !hasBirth) continue;
-
       const extra = extractFromTextLine(txt);
       if (extra.cpf) meta.matchedCpf += 1;
-
       const passenger: Passenger = {
         fullName,
         birthDate: extra.birthDate,
@@ -1302,47 +1088,36 @@ function extractPassengersFromDomWithMeta(doc: any): PassengerDomResult {
         passport: "",
         passportExpiry: "",
       };
-
       const key = makeKey(passenger);
       if (!key) continue;
-
       if (byKey.has(key)) continue;
       byKey.set(key, passenger);
     }
-
     const out = Array.from(byKey.values());
     meta.extracted = out.length;
-
     if (out.length === 0) {
       meta.notes.push("no_passengers_from_dom");
     }
-
     return { passengers: out, meta };
   } catch (_) {
     meta.notes.push("dom_exception");
     return { passengers: [], meta };
   }
 }
-
 // Backwards compatible wrapper
 function extractPassengersFromDom(doc: any): Passenger[] {
   return extractPassengersFromDomWithMeta(doc).passengers;
 }
-
-
 function matchAllHotelsFromDom(doc: any): ExtractedHotel[] {
   try {
     const results: ExtractedHotel[] = [];
-
     // The most reliable anchor is the reservation badge (Número da Reserva)
     const badges = Array.from(doc.querySelectorAll('span.badge'));
     for (const b of badges) {
       const title = (b.getAttribute?.('data-bs-original-title') || '').toLowerCase();
       const badgeText = (b.textContent || '').replace(/\s+/g, ' ').trim();
-
       if (!title.includes('reserva') || !title.includes('hosped')) continue;
       if (!badgeText) continue;
-
       // Walk up to the hotel row container
       let node: any = b;
       while (node && node.tagName !== 'BODY') {
@@ -1351,24 +1126,19 @@ function matchAllHotelsFromDom(doc: any): ExtractedHotel[] {
         node = node.parentElement;
       }
       if (!node) continue;
-
       const nameEl = node.querySelector('h6.hDescricao');
       const rawName = (nameEl?.textContent || '').replace(/\s+/g, ' ').trim();
       const name = rawName.replace(/\s*★\s*/g, ' ').trim() || rawName;
-
       // Address (optional)
       const addrEl = node.querySelector('a[href*="google.com/maps"]');
       const address = (addrEl?.textContent || '').replace(/\s+/g, ' ').trim();
-
       // Dates are usually in the right column: "DD/MM/YYYY 14h -> DD/MM/YYYY"
       const rightText = (node.textContent || '').replace(/\s+/g, ' ');
       const dateMatches = rightText.match(/\b\d{2}\/\d{2}\/\d{4}\b/g) || [];
       const checkInBR = dateMatches[0];
       const checkOutBR = dateMatches[1];
-
       const checkIn = parseDateBRToISO(checkInBR || '') || undefined;
       const checkOut = parseDateBRToISO(checkOutBR || '') || undefined;
-
       results.push({
         name: name || 'Hospedagem',
         checkIn,
@@ -1378,7 +1148,6 @@ function matchAllHotelsFromDom(doc: any): ExtractedHotel[] {
         rawText: node.textContent || '',
       });
     }
-
     // Deduplicate by confirmation code
     const byCode = new Map<string, ExtractedHotel>();
     for (const h of results) {
@@ -1390,7 +1159,6 @@ function matchAllHotelsFromDom(doc: any): ExtractedHotel[] {
     return [];
   }
 }
-
 function matchAllHotels(pageText: string): ExtractedHotel[] {
   const hotels: ExtractedHotel[] = [];
   // Tenta encontrar blocos que contenham hotel/hospedagem
@@ -1401,14 +1169,12 @@ function matchAllHotels(pageText: string): ExtractedHotel[] {
     const start = Math.max(0, blockStart - 200);
     const end = Math.min(pageText.length, blockStart + 600);
     const chunk = pageText.slice(start, end);
-
     const name = (m[2] || '').trim();
     const cityMatch = chunk.match(/Cidade[:\s]*([A-ZÀ-Ÿa-zà-ÿ\- ]{2,80})/i);
     const checkIn = chunk.match(/Check[- ]?in[:\s]*([0-3]?\d\/[01]?\d\/[0-9]{4})/i)?.[1] || '';
     const checkOut = chunk.match(/Check[- ]?out[:\s]*([0-3]?\d\/[01]?\d\/[0-9]{4})/i)?.[1] || '';
     const confirm = chunk.match(/(Confirmação|Código|Reserva)[:\s]*([A-Z0-9\-]{4,20})/i)?.[2] || '';
     const total = parseMoneyBRL(chunk) ?? null;
-
     hotels.push({
       hotelName: name || '',
       city: cityMatch ? cityMatch[1].trim() : undefined,
@@ -1419,10 +1185,8 @@ function matchAllHotels(pageText: string): ExtractedHotel[] {
       passengers: [],
     });
   }
-
   return hotels;
 }
-
 type ExtractedCar = {
   company?: string;
   pickupLocation?: string;
@@ -1433,7 +1197,6 @@ type ExtractedCar = {
   category?: string;
   driverName?: string;
 };
-
 function matchAllCars(pageText: string): ExtractedCar[] {
   const cars: ExtractedCar[] = [];
   // Procura por blocos que mencionem locadora/retirada/devolução
@@ -1444,14 +1207,12 @@ function matchAllCars(pageText: string): ExtractedCar[] {
     const start = Math.max(0, blockStart - 200);
     const end = Math.min(pageText.length, blockStart + 600);
     const chunk = pageText.slice(start, end);
-
     const companyMatch = chunk.match(/Locadora[:\s]*([A-ZÀ-Ÿa-zà-ÿ0-9\- ]{2,80})/i);
     const pickupMatch = chunk.match(/Retirada[:\s]*([0-3]?\d\/[01]?\d\/[0-9]{4}(?:\s+\d{2}:?\d{2})?)/i);
     const dropoffMatch = chunk.match(/Devolu[cç][aã]o[:\s]*([0-3]?\d\/[01]?\d\/[0-9]{4}(?:\s+\d{2}:?\d{2})?)/i);
     const confirm = chunk.match(/(Confirmação|Código)[:\s]*([A-Z0-9\-]{4,20})/i)?.[2] || '';
     const category = chunk.match(/Categoria[:\s]*([A-Z0-9\- ]{2,40})/i)?.[1] || '';
     const driver = chunk.match(/Motorista[:\s]*([A-ZÀ-Ÿa-zà-ÿ ]{2,80})/i)?.[1] || '';
-
     cars.push({
       company: companyMatch ? companyMatch[1].trim() : undefined,
       pickupDateTime: pickupMatch ? pickupMatch[1].trim() : undefined,
@@ -1461,7 +1222,6 @@ function matchAllCars(pageText: string): ExtractedCar[] {
       driverName: driver || undefined,
     });
   }
-
   // Fallback: alguns vouchers do Iddas mostram o aluguel de carro dentro da
   // seção "Transporte" e só exibem a descrição do veículo (sem "Locadora",
   // "Retirada" ou "Devolução").
@@ -1473,17 +1233,13 @@ function matchAllCars(pageText: string): ExtractedCar[] {
       .split("\n")
       .map((l) => l.replace(/\s+/g, " ").trim())
       .filter(Boolean);
-
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]?.toLowerCase();
       if (!line) continue;
-
       const isTransportHeader = line === "transporte" || line.startsWith("transporte ");
       if (!isTransportHeader) continue;
-
       const next = lines[i + 1] ?? "";
       if (!next) continue;
-
       const nextLower = next.toLowerCase();
       // Evita pegar cabeçalhos de outras seções.
       if (
@@ -1494,47 +1250,36 @@ function matchAllCars(pageText: string): ExtractedCar[] {
       ) {
         continue;
       }
-
       cars.push({
         company: undefined,
         category: next,
       });
-
       break;
     }
   }
-
   return cars;
 }
-
-
 function matchCarsFromDom(doc: Document): any[] {
   const cars: any[] = [];
-
   const titles = Array.from(
     doc.querySelectorAll('h6.card-title, h5.card-title, h4.card-title')
   ) as Element[];
-
   for (const title of titles) {
     const label = (title.textContent || '').trim().toLowerCase();
     if (label !== 'transporte') continue;
-
     // Estrutura típica: col (header) -> row -> col (container) -> mb-3 (conteúdo)
     const innerCol = title.closest('div.col') as Element | null;
     const headerRow = innerCol?.parentElement as Element | null;
     const outerCol = headerRow?.parentElement as Element | null;
     const scope = outerCol || headerRow || innerCol || (title.parentElement as Element | null);
     if (!scope) continue;
-
     const descEl = (scope.querySelector('h6.hDescricao') ||
       scope.querySelector('.hDescricao')) as Element | null;
     const rawDesc = (descEl?.textContent || '').trim();
     if (!rawDesc) continue;
-
     // Tenta pegar algum identificador (às vezes aparece como badge)
     const badge = scope.querySelector('span.badge') as Element | null;
     const locator = (badge?.textContent || '').trim() || null;
-
     cars.push({
       company: null,
       locator,
@@ -1550,14 +1295,11 @@ function matchCarsFromDom(doc: Document): any[] {
       driver: null,
     });
   }
-
   return cars;
 }
-
 function dedupeCars(list: any[]): any[] {
   const seen = new Set<string>();
   const out: any[] = [];
-
   for (const c of list || []) {
     const model = c?.carModel || c?.category || '';
     const loc = c?.locator || '';
@@ -1568,20 +1310,15 @@ function dedupeCars(list: any[]): any[] {
     seen.add(key);
     out.push(c);
   }
-
   return out;
 }
-
 function normalizeCarsWithHotelDates(cars: any[], hotelsOut: any[]): any[] {
   const h0 = (hotelsOut && hotelsOut.length ? hotelsOut[0] : null) as any;
-
   return (cars || []).map((c) => {
     const pickupDate = c?.pickupDate || c?.pickup?.date || null;
     const returnDate = c?.returnDate || c?.dropoff?.date || null;
-
     const patchedPickup = pickupDate || h0?.checkIn || null;
     const patchedReturn = returnDate || h0?.checkOut || null;
-
     return {
       ...c,
       company: c?.company || 'Locadora',
@@ -1593,25 +1330,21 @@ function normalizeCarsWithHotelDates(cars: any[], hotelsOut: any[]): any[] {
     };
   });
 }
-
 serve(async (req: Request) => {
   const corsHeaders = buildCorsHeaders(req);
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
-
   try {
     const bodyText = await req.text();
     const body = bodyText ? JSON.parse(bodyText) : null;
     const url = body?.url;
-
     if (!url || typeof url !== "string") {
       return new Response(JSON.stringify({ success: false, error: "Envie { url: string }" }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
 	    }
-
 	    const fetchHtmlOnce = async (attempt: number) => {
   const headers = new Headers();
   headers.set(
@@ -1623,11 +1356,9 @@ serve(async (req: Request) => {
   headers.set("cache-control", "no-cache");
   headers.set("pragma", "no-cache");
   if (attempt >= 2) headers.set("referer", url);
-
   const controller = new AbortController();
   const timeoutMs = attempt === 1 ? 12000 : 18000;
   const t = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
     return await fetch(url, {
       method: "GET",
@@ -1639,21 +1370,17 @@ serve(async (req: Request) => {
     clearTimeout(t);
   }
 };
-
 let pageText = "";
 let doc: Document | null = null;
 let passengers: Passenger[] = [];
 let lastStatus = 0;
-
 let lastHtml = "";
 let lastNormalizedFromHtml = "";
 let lastExpectedPassengerCount: number | null = null;
 let lastPassengersDomMeta: PassengerDomMeta | null = null;
-
 for (let attempt = 1; attempt <= 2; attempt++) {
   const r = await fetchHtmlOnce(attempt);
   lastStatus = r.status;
-
   if (!r.ok) {
     if (attempt === 2) {
       return new Response(JSON.stringify({ success: false, error: `Falha ao buscar URL (${r.status})` }), {
@@ -1663,30 +1390,24 @@ for (let attempt = 1; attempt <= 2; attempt++) {
     }
     continue;
   }
-
   const html = await r.text();
   lastHtml = html;
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const rawText = extractTextWithNewlines(parsed) || parsed?.body?.textContent || "";
   const normalized = normalizeText(rawText);
-
   // Alternate text extraction directly from raw HTML. Some layouts hide or collapse
   // parts of the passenger block when relying only on textContent.
   const normalizedFromHtml = htmlToText(html);
   lastNormalizedFromHtml = normalizedFromHtml;
-
   const passengersA = extractPassengers(normalized);
   const passengersB = normalizedFromHtml ? extractPassengers(normalizedFromHtml) : [];
-
   const expectedCount = getExpectedPassengerCount(normalized) ?? getExpectedPassengerCount(normalizedFromHtml);
   lastExpectedPassengerCount = expectedCount;
-
   const score = (ps: Passenger[]) => {
     const full = ps.filter((p) => (p.fullName || "").trim().split(/\s+/).filter(Boolean).length >= 2).length;
     const birth = ps.filter((p) => !!p.birthDate).length;
     return ps.length * 1000 + full * 10 + birth * 5;
   };
-
   let extractedPassengers = passengersA;
   if (score(passengersB) > score(extractedPassengers)) extractedPassengers = passengersB;
   if (expectedCount !== null) {
@@ -1694,44 +1415,34 @@ for (let attempt = 1; attempt <= 2; attempt++) {
     if (passengersA.length >= expectedCount && passengersB.length < expectedCount) extractedPassengers = passengersA;
     if (passengersB.length >= expectedCount && passengersA.length < expectedCount) extractedPassengers = passengersB;
   }
-
-
   // DOM-based extraction for IDDAS passenger banner (more reliable for names and reduces cross-matching)
   const domResult = extractPassengersFromDomWithMeta(parsed);
   const passengersDom = domResult.passengers;
   lastPassengersDomMeta = domResult.meta;
-
   const makePassengerKey = (p: Passenger) => {
     const cpfDigits = normalizeCPF(p.cpf);
     if (cpfDigits.length === 11) return `cpf:${cpfDigits}`;
-
     const nm = sanitizePassengerName(p.fullName || "");
     const bd = (p.birthDate || "").trim();
     if (nm && bd) return `namebirth:${nm.toUpperCase()}|${bd}`;
     if (nm) return `name:${nm.toUpperCase()}`;
     return "";
   };
-
   const mergedList: Passenger[] = [];
   const indexByKey = new Map<string, number>();
-
   const upsertMerged = (p: Passenger, source: "text" | "dom") => {
     const key = makePassengerKey(p);
     if (!key) return;
-
     const idx = indexByKey.get(key);
     const existing = idx === undefined ? null : mergedList[idx];
-
     const cpfDigits = normalizeCPF(p.cpf);
     const incomingCpf = cpfDigits.length === 11 ? cpfDigits : "";
-
     const incomingName = sanitizePassengerName(p.fullName || "");
     const incomingNameIsValid =
       !!incomingName &&
       isProbablyPersonName(incomingName) &&
       !looksLikeCompanyName(incomingName) &&
       !isLabelName(incomingName);
-
     if (!existing) {
       mergedList.push({
         fullName: incomingNameIsValid ? incomingName : (p.fullName || ""),
@@ -1745,20 +1456,16 @@ for (let attempt = 1; attempt <= 2; attempt++) {
       indexByKey.set(key, mergedList.length - 1);
       return;
     }
-
     const existingName = sanitizePassengerName(existing.fullName || "");
     const existingWords = existingName ? existingName.split(/\s+/).filter(Boolean).length : 0;
     const incomingWords = incomingName ? incomingName.split(/\s+/).filter(Boolean).length : 0;
-
     if (incomingNameIsValid) {
       const shouldReplaceName =
         source === "dom"
           ? (incomingWords >= 2 && incomingName !== existingName)
           : (!existingName || !isProbablyPersonName(existingName) || incomingWords > existingWords);
-
       if (shouldReplaceName) existing.fullName = incomingName;
     }
-
     if (!existing.birthDate && p.birthDate) existing.birthDate = p.birthDate;
     if (!existing.cpf && incomingCpf) existing.cpf = incomingCpf;
     if (!existing.phone && p.phone) existing.phone = p.phone;
@@ -1766,35 +1473,27 @@ for (let attempt = 1; attempt <= 2; attempt++) {
     if (!existing.passport && p.passport) existing.passport = p.passport;
     if (!existing.passportExpiry && p.passportExpiry) existing.passportExpiry = p.passportExpiry;
   };
-
   // Prefer DOM order first, then fill gaps from text extraction
   for (const p of passengersDom) upsertMerged(p, "dom");
   for (const p of extractedPassengers) upsertMerged(p, "text");
-
   if (mergedList.length) extractedPassengers = mergedList;
-
-
   // Retry when the HTML is likely incomplete (happens with aggressive caching)
   const shouldRetry =
     !parsed ||
     normalized.length < 3000 ||
     extractedPassengers.length === 0 ||
     (expectedCount !== null && extractedPassengers.length < expectedCount);
-
   pageText = normalized;
   doc = parsed;
   passengers = extractedPassengers;
-
   if (!shouldRetry) break;
 }
-
 if (!pageText || !doc) {
   return new Response(JSON.stringify({ success: false, error: `Falha ao processar HTML (${lastStatus})` }), {
     status: 200,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
-
 const total = parseMoneyBRL(pageText);
 const reservedBy = extractReservedBy(pageText);
     
@@ -1802,7 +1501,6 @@ const reservedBy = extractReservedBy(pageText);
     const mainPassengerName = passengers.length > 0 ? passengers[0].fullName : "";
     
     const flights = matchAllFlights(pageText, mainPassengerName);
-
     // Map airline reservation links (from QR-code anchors) to flights in order.
     // This improves the "Consultar Reserva" button accuracy for LATAM/GOL.
     const airlineLinks = extractAirlineReservationLinks(doc);
@@ -1817,7 +1515,6 @@ const reservedBy = extractReservedBy(pageText);
     const hotelsDom: ExtractedHotel[] = [];
     const hotelsText = matchAllHotels(pageText) || [];
     const hotelsMerged = [...hotelsDom, ...hotelsText];
-
     const hotelSeen = new Set<string>();
     const hotels: ExtractedHotel[] = [];
     for (const h of hotelsMerged) {
@@ -1830,12 +1527,10 @@ const reservedBy = extractReservedBy(pageText);
     ...(matchAllCars(pageText) || []),
     ...matchCarsFromDom(doc),
   ]);
-
     const suggestedTitle =
       flights.length > 0
         ? `${flights[0].originCode} à ${flights[0].destinationCode} (${flights[0].departureDate || "sem data"})`
         : "Reserva (link)";
-
     // Helper: parse dd/MM/yyyy -> Date
     function parseBRDate(dmy?: string | null | undefined): Date | null {
       if (!dmy) return null;
@@ -1850,7 +1545,6 @@ const reservedBy = extractReservedBy(pageText);
       if (Number.isNaN(dt.getTime())) return null;
       return dt;
     }
-
     function formatBRDate(d: Date | null): string | null {
       if (!d) return null;
       const dd = String(d.getDate()).padStart(2, '0');
@@ -1858,7 +1552,6 @@ const reservedBy = extractReservedBy(pageText);
       const yyyy = d.getFullYear();
       return `${dd}/${mm}/${yyyy}`;
     }
-
     // derive min/max flight departure dates
     const flightDates: Date[] = [];
     for (const f of flights) {
@@ -1872,14 +1565,12 @@ const reservedBy = extractReservedBy(pageText);
       flightMin = flightDates[0];
       flightMax = flightDates[flightDates.length - 1];
     }
-
     // Normalize hotels to include name and computed checkIn/checkOut as dd/MM/yyyy or null
     const hotelsOut = hotels.map((h) => {
       const rawCheckIn = (h.checkIn || (h as any).check_in || '') as string;
       const rawCheckOut = (h.checkOut || (h as any).check_out || '') as string;
       let ci = parseBRDate(rawCheckIn);
       let co = parseBRDate(rawCheckOut);
-
       // If neither present, derive from flights
       if ((!ci || !co) && flightMin && flightMax) {
         if (!ci) ci = flightMin;
@@ -1891,7 +1582,6 @@ const reservedBy = extractReservedBy(pageText);
           co = next;
         }
       }
-
       // If only one side exists and flights provide a complement, try to complement
       if (ci && !co && flightMax) {
         co = flightMax;
@@ -1909,7 +1599,6 @@ const reservedBy = extractReservedBy(pageText);
           co = next;
         }
       }
-
       return {
         name: h.hotelName || (h as any).name || null,
         confirmationCode: h.confirmationCode || (h as any).confirm || undefined,
@@ -1921,7 +1610,6 @@ const reservedBy = extractReservedBy(pageText);
         passengers: h.passengers || [],
       };
     });
-
     // Normalize response to always include hotels and cars arrays (never null)
     // Convert passengers to frontend-friendly format: { name, cpf?, birthDate?, phone?, email?, passport? }
     const passengersOut = passengers.map(p => ({
@@ -1932,9 +1620,7 @@ const reservedBy = extractReservedBy(pageText);
       email: p.email || undefined,
       passport: p.passport || undefined,
     }));
-
     const carsOut = normalizeCarsWithHotelDates(cars, hotelsOut);
-
 const dataOut = {
       total: total ?? null,
       suggestedTitle,
@@ -1946,12 +1632,10 @@ const dataOut = {
       cars: carsOut,
       carRentals: carsOut,
     };
-
     const shouldIncludeDebug =
       passengersOut.length === 0 ||
       passengersOut.some((p) => !isProbablyPersonName(p.name || "")) ||
       (lastExpectedPassengerCount !== null && passengersOut.length < lastExpectedPassengerCount);
-
     const debugOut = shouldIncludeDebug
       ? {
           lastStatus,
@@ -1971,7 +1655,6 @@ const dataOut = {
           ),
         }
       : undefined;
-
     return new Response(
       JSON.stringify({
         success: true,
