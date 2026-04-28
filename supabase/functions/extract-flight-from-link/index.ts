@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
       global: {
         headers: {
           Authorization: `Bearer ${token}`,
-        },
+        },''
       },
     });
 

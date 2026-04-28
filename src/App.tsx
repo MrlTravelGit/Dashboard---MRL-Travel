@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ThemeProvider } from "next-themes";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { BookingProvider } from "./contexts/BookingContext";
+import CashbackPage from "./pages/CashbackPage";
 import HomePage from "./pages/HomePage";
 import FlightsPage from "./pages/FlightsPage";
 import HotelsPage from "./pages/HotelsPage";
@@ -75,6 +76,7 @@ function AppRoutes() {
       <Route path="/voos" element={<ProtectedRoute><FlightsPage /></ProtectedRoute>} />
       <Route path="/hospedagens" element={<ProtectedRoute><HotelsPage /></ProtectedRoute>} />
       <Route path="/aluguel-carro" element={<ProtectedRoute><CarRentalsPage /></ProtectedRoute>} />
+      <Route path="/cashback" element={<ProtectedRoute><CashbackPage /></ProtectedRoute>} />
       <Route path="/empresas" element={<ProtectedRoute><AdminRoute><CompaniesPage /></AdminRoute></ProtectedRoute>} />
       {/* Usuários de empresa também devem acessar a aba de Funcionários, porém com filtro por company_id */}
       <Route path="/funcionarios" element={<ProtectedRoute><EmployeesPage /></ProtectedRoute>} />

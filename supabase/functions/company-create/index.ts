@@ -6,6 +6,7 @@ type Body = {
   cnpj: string;
   email: string;
   payment_deadline_days?: number;
+  cashback_percent?: number;      // ← NOVO
 };
 
 function json(corsHeaders: Record<string, string>, status: number, payload: unknown) {
@@ -107,6 +108,11 @@ Deno.serve(async (req) => {
         ? body.payment_deadline_days
         : 30;
 
+    // cashback_percent: valida 0-100, default 1
+    const rawPct = typeof body?.cashback_percent === "number" ? body.cashback_percent : 1;
+    const cashback_percent =
+      Number.isFinite(rawPct) && rawPct >= 0 && rawPct <= 100 ? rawPct : 1;
+
     if (!name) return json(corsHeaders, 400, { code: 400, message: "Missing name" });
     if (!cnpj) return json(corsHeaders, 400, { code: 400, message: "Missing cnpj" });
     if (!email) return json(corsHeaders, 400, { code: 400, message: "Missing email" });
@@ -120,9 +126,10 @@ Deno.serve(async (req) => {
         cnpj,
         email,
         payment_deadline_days,
+        cashback_percent,          // ← NOVO
         created_by: callerUserId,
       })
-      .select("id, name, cnpj, email, payment_deadline_days, logo_url, created_at, updated_at")
+      .select("id, name, cnpj, email, payment_deadline_days, cashback_percent, logo_url, created_at, updated_at")
       .single();
 
     if (companyErr || !company?.id) {

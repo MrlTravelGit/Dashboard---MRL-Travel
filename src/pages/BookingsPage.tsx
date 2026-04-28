@@ -33,6 +33,8 @@ interface BookingFromDB {
   total_paid: number | null;
   total_original: number | null;
   created_at: string;
+  // cashback via FK join (cashback_entries)
+  cashback_amount: number | null;
 }
 
 export default function BookingsPage() {
@@ -95,7 +97,7 @@ export default function BookingsPage() {
     setIsLoadingBookings(true);
     let query = supabase
       .from('bookings')
-      .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at')
+      .select('id, name, company_id, source_url, flights, hotels, car_rentals, passengers, total_paid, total_original, created_at, cashback_entries(cashback_amount)')
       .order('created_at', { ascending: false });
 
     // Exemplo: se quiser filtrar por empresa, só faça se companyId estiver definido
@@ -110,6 +112,10 @@ export default function BookingsPage() {
         hotels: Array.isArray(b.hotels) ? b.hotels : [],
         car_rentals: Array.isArray(b.car_rentals) ? b.car_rentals : [],
         passengers: Array.isArray(b.passengers) ? b.passengers : [],
+        // cashback_entries retorna array (UNIQUE booking_id = 0 ou 1 item)
+        cashback_amount: Array.isArray(b.cashback_entries) && b.cashback_entries.length > 0
+          ? (b.cashback_entries[0].cashback_amount ?? null)
+          : null,
       }));
       setBookings(typedBookings);
     } else if (error) {
@@ -1467,6 +1473,16 @@ export default function BookingsPage() {
                           priceOriginal={booking.total_original || 0} 
                         />
                       </div>
+
+                      {/* Cashback */}
+                      {booking.cashback_amount != null && booking.cashback_amount > 0 && (
+                        <div className="flex-shrink-0 text-right">
+                          <p className="text-xs text-muted-foreground">Cashback</p>
+                          <p className="text-sm font-bold text-primary">
+                            {booking.cashback_amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </p>
+                        </div>
+                      )}
                       
                       <Button
                         variant="outline"
@@ -1598,6 +1614,16 @@ export default function BookingsPage() {
                           pricePaid={booking.total_paid || 0} 
                           priceOriginal={booking.total_original || 0} 
                           />
+
+                          {/* Cashback */}
+                          {booking.cashback_amount != null && booking.cashback_amount > 0 && (
+                            <div className="text-right shrink-0">
+                              <p className="text-xs text-muted-foreground">Cashback</p>
+                              <p className="text-sm font-bold text-primary">
+                                {booking.cashback_amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                              </p>
+                            </div>
+                          )}
 
                            <Button
                               variant="outline"

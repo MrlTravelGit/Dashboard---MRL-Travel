@@ -49,6 +49,7 @@ export default function CompaniesPage() {
     cnpj: '',
     email: '',
     paymentDeadlineDays: '30',
+    cashbackPercent: '1',
   });
 
   const resetPasswordModal = () => {
@@ -233,6 +234,7 @@ export default function CompaniesPage() {
           cnpj: formData.cnpj,
           email: formData.email,
           payment_deadline_days: parseInt(formData.paymentDeadlineDays) || 30,
+          cashback_percent: parseFloat(formData.cashbackPercent) || 1,
         };
         if (logoFile) {
           const logoUrl = await uploadLogo(editingCompany.id);
@@ -260,6 +262,7 @@ export default function CompaniesPage() {
           cnpj: formData.cnpj,
           email: formData.email,
           payment_deadline_days: parseInt(formData.paymentDeadlineDays) || 30,
+          cashback_percent: parseFloat(formData.cashbackPercent) || 1,
         };
         // Cria somente a empresa
         const { data: fnData, error: fnErr } = await supabase.functions.invoke('company-create', {
@@ -294,7 +297,7 @@ export default function CompaniesPage() {
       }
       setOpen(false);
       setEditingCompany(null);
-      setFormData({ name: '', cnpj: '', email: '', paymentDeadlineDays: '30' });
+      setFormData({ name: '', cnpj: '', email: '', paymentDeadlineDays: '30', cashbackPercent: '1' });
       setLogoFile(null);
       setLogoPreview(null);
       fetchCompanies();
@@ -410,6 +413,7 @@ export default function CompaniesPage() {
       cnpj: company.cnpj,
       email: company.email,
         paymentDeadlineDays: String((company as any).payment_deadline_days || 30),
+      cashbackPercent: String((company as any).cashback_percent ?? 1),
     });
     setLogoPreview(company.logo_url || null);
     setLogoFile(null);
@@ -481,7 +485,7 @@ export default function CompaniesPage() {
             setOpen(o);
             if (!o) {
               setEditingCompany(null);
-              setFormData({ name: '', cnpj: '', email: '', paymentDeadlineDays: '30' });
+              setFormData({ name: '', cnpj: '', email: '', paymentDeadlineDays: '30', cashbackPercent: '1' });
               setLogoFile(null);
               setLogoPreview(null);
             }
@@ -618,6 +622,29 @@ export default function CompaniesPage() {
                   />
                   <p className="text-xs text-muted-foreground">
                     Número de dias após a reserva para vencimento do pagamento
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="cashbackPercent">Percentual de Cashback (%)</Label>
+                  <Input
+                    id="cashbackPercent"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={formData.cashbackPercent}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === '' || (parseFloat(v) >= 0 && parseFloat(v) <= 100)) {
+                        setFormData({ ...formData, cashbackPercent: v });
+                      }
+                    }}
+                    placeholder="1"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Ex: 0.5, 1, 2.75. Calculado sobre o valor pago de cada reserva.
                   </p>
                 </div>
 
@@ -825,6 +852,7 @@ export default function CompaniesPage() {
                     <TableHead>CNPJ</TableHead>
                     <TableHead>E-mail</TableHead>
                     <TableHead>Prazo Pgto</TableHead>
+                    <TableHead>Cashback</TableHead>
                     <TableHead>Data de Cadastro</TableHead>
                     <TableHead className="w-[80px]">Ações</TableHead>
                   </TableRow>
@@ -844,6 +872,7 @@ export default function CompaniesPage() {
                       <TableCell>{company.cnpj}</TableCell>
                       <TableCell>{company.email}</TableCell>
                       <TableCell>{(company as any).payment_deadline_days || 30} dias</TableCell>
+                      <TableCell>{(company as any).cashback_percent ?? 1}%</TableCell>
                       <TableCell>
                         {new Date(company.created_at).toLocaleDateString('pt-BR')}
                       </TableCell>

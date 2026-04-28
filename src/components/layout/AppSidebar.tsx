@@ -1,4 +1,4 @@
-import { Home, Building2, Car, Package, Users, Plane, UserCheck } from 'lucide-react';
+import { Home, Building2, Car, Package, Users, Plane, UserCheck, TrendingUp } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -18,6 +18,7 @@ const menuItems = [
   { title: 'Voos', url: '/voos', icon: Plane, adminOnly: false },
   { title: 'Hospedagens', url: '/hospedagens', icon: Building2, adminOnly: false },
   { title: 'Aluguel de Carro', url: '/aluguel-carro', icon: Car, adminOnly: false },
+  { title: 'Cashback', url: '/cashback', icon: TrendingUp, adminOnly: false },
   { title: 'Empresas', url: '/empresas', icon: Users, adminOnly: true },
   // Para usuários de empresa, deve aparecer e listar apenas os funcionários vinculados à empresa.
   { title: 'Funcionários', url: '/funcionarios', icon: UserCheck, adminOnly: false },
@@ -32,12 +33,14 @@ export function AppSidebar() {
   // Mostra opções admin quando:
   // - Não está carregando a role (isLoadingRole === false)
   // - E (isAdmin === true OU appRole === "admin")
-  // 
+  //
   // Enquanto carrega: não mostra, para evitar carregar página admin e depois esconder
-  const isUserAdmin = isAdmin || appRole === "admin";
+  const isUserAdmin = isAdmin || appRole === 'admin';
   const canViewAdminItems = !isLoadingRole && isUserAdmin;
 
-  const visibleMenuItems = menuItems.filter(item => !item.adminOnly || canViewAdminItems);
+  const visibleMenuItems = menuItems.filter(
+    (item) => !item.adminOnly || canViewAdminItems
+  );
 
   return (
     <Sidebar className={collapsed ? 'w-14' : 'w-60'} collapsible="icon">
