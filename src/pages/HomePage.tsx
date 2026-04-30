@@ -137,7 +137,7 @@ export default function HomePage() {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card>
+          <Card className="card-elevated">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -146,14 +146,14 @@ export default function HomePage() {
                     {bookings.length}
                   </p>
                 </div>
-                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                <div className="h-12 w-12 rounded-xl bg-background/50 border border-border/50 flex items-center justify-center shadow-inner">
                   <Package className="h-6 w-6 text-primary" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="card-elevated">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -162,14 +162,14 @@ export default function HomePage() {
                     R$ {fmt(totalPaid)}
                   </p>
                 </div>
-                <div className="h-12 w-12 rounded-full bg-secondary/10 flex items-center justify-center">
+                <div className="h-12 w-12 rounded-xl bg-background/50 border border-border/50 flex items-center justify-center shadow-inner">
                   <Building2 className="h-6 w-6 text-secondary" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-primary/10 to-accent/20 border-primary/20">
+          <Card className="card-elevated bg-gradient-to-br from-primary/10 to-accent/20 border-primary/20">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -183,14 +183,14 @@ export default function HomePage() {
                     {savingsPercentage}% de economia
                   </p>
                 </div>
-                <div className="h-12 w-12 rounded-full bg-accent flex items-center justify-center">
+                <div className="h-12 w-12 rounded-xl bg-background/50 border border-accent/20 flex items-center justify-center shadow-inner">
                   <TrendingUp className="h-6 w-6 text-accent-foreground" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="card-elevated">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -200,7 +200,7 @@ export default function HomePage() {
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">1% por reserva</p>
                 </div>
-                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                <div className="h-12 w-12 rounded-xl bg-background/50 border border-border/50 flex items-center justify-center shadow-inner">
                   <TrendingUp className="h-6 w-6 text-primary" />
                 </div>
               </div>

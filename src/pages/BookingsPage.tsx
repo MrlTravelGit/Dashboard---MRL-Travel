@@ -19,6 +19,7 @@ import { Plus, Search, Package, Plane, Building2, Car, LayoutGrid, LayoutList, L
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { Flight, Hotel, CarRental, Company } from '@/types/booking';
+import { computeBookingStatus, consolidatePassengers, type BookingStatus } from '@/utils/bookingUtils';
 import { supabase, SUPABASE_URL, SUPABASE_KEY } from '@/integrations/supabase/client';
 
 interface BookingFromDB {
@@ -43,6 +44,7 @@ export default function BookingsPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
   const [open, setOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'card' | 'landscape'>('card');
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -863,8 +865,15 @@ export default function BookingsPage() {
   };
 
   // Mostra todas para admin, ou só da empresa do usuário
+  // Filtra por texto e por status (Próximas / Concluídas / Todas)
   const filteredBookings = bookings.filter(booking => {
-    return booking.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = booking.name.toLowerCase().includes(searchTerm.toLowerCase());
+    if (!matchesSearch) return false;
+    if (statusFilter === 'all') return true;
+    const status = computeBookingStatus(booking);
+    if (statusFilter === 'upcoming') return status === 'upcoming' || status === 'partial' || status === 'unknown';
+    if (statusFilter === 'completed') return status === 'completed';
+    return true;
   });
 
   const getCompanyName = (companyId?: string) => {
@@ -939,6 +948,21 @@ export default function BookingsPage() {
           </div>
           
           <div className="flex items-center gap-2">
+            {/* Filtro de status: Todas / Próximas / Concluídas */}
+            <div className="flex items-center border rounded-lg p-1">
+              {(['all', 'upcoming', 'completed'] as const).map((s) => (
+                <Button
+                  key={s}
+                  variant={statusFilter === s ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setStatusFilter(s)}
+                  className="h-8 px-3 text-xs"
+                >
+                  {s === 'all' ? 'Todas' : s === 'upcoming' ? 'Próximas' : 'Concluídas'}
+                </Button>
+              ))}
+            </div>
+
             <div className="flex items-center border rounded-lg p-1">
               <Button
                 variant={viewMode === 'card' ? 'default' : 'ghost'}
@@ -1369,14 +1393,14 @@ export default function BookingsPage() {
               if (viewMode === 'landscape') {
                 // Modo Lista - Compacto
                 return (
-                  <Card key={booking.id} className="overflow-hidden">
+                  <Card key={booking.id} className="overflow-hidden card-elevated">
                     <div className="flex items-center gap-4 p-4">
                       {/* Ícone/Logo da Cia Aérea */}
                       <div className="flex-shrink-0">
                         {airlines.length > 0 ? (
                           <AirlineLogos airlines={airlines} />
                         ) : (
-                          <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                          <div className="h-10 w-10 rounded-xl bg-background/50 border border-border/50 flex items-center justify-center shadow-inner">
                             <Package className="h-5 w-5 text-primary" />
                           </div>
                         )}
@@ -1384,7 +1408,15 @@ export default function BookingsPage() {
                       
                       {/* Informações Principais */}
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-foreground truncate">{booking.name}</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-foreground truncate">{booking.name}</h3>
+                          {(() => {
+                            const st = computeBookingStatus(booking);
+                            if (st === 'completed') return <span className="shrink-0 status-badge-completed">Concluída</span>;
+                            if (st === 'partial') return <span className="shrink-0 status-badge-upcoming">Em andamento</span>;
+                            return null;
+                          })()}
+                        </div>
                         <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap">
                           <span className="font-medium text-foreground">{getCompanyName(booking.company_id)}</span>
                           {travelDate && (
@@ -1411,39 +1443,14 @@ export default function BookingsPage() {
                           </div>
                         )}
 
-                        {/* Passengers short list */}
+                        {/* Passengers short list — deduplicado por CPF */}
                         <div className="text-sm text-muted-foreground mt-1">
                           <span className="font-medium">Passageiros: </span>
                           {(() => {
-                            const names: string[] = [];
-                            // Use booking.passengers if available (stored in DB), otherwise fallback to flights/hotels
-                            if (Array.isArray(booking.passengers) && booking.passengers.length > 0) {
-                              for (const p of booking.passengers) if (p.name) names.push(p.name);
-                            } else {
-                              // Fallback: derive from flights
-                              if (Array.isArray(booking.flights)) {
-                                for (const f of booking.flights) if (f.passengerName) names.push(f.passengerName);
-                              }
-                              // If still empty, try hotels
-                              if (names.length === 0 && Array.isArray(booking.hotels)) {
-                                for (const h of booking.hotels) if ((h as any).guestName) names.push((h as any).guestName);
-                              }
-                            }
-                            // Deduplicate while preserving order
-                            const unique: string[] = [];
-                            const seen = new Set<string>();
-                            for (const n of names) {
-                              const key = String(n).trim();
-                              if (!key) continue;
-                              if (seen.has(key)) continue;
-                              seen.add(key);
-                              unique.push(key);
-                            }
-
-                            // Show all passengers when available. If we only have a "primary" passenger, show it once.
-                            if (unique.length === 0) return <>-</>;
-                            return <>{unique.join(', ')}</>;
-})()}
+                            const pax = consolidatePassengers(booking);
+                            if (pax.length === 0) return <>-</>;
+                            return <>{pax.map(p => p.name).join(', ')}</>;
+                          })()}
                         </div>
                       </div>
                       
@@ -1547,7 +1554,7 @@ export default function BookingsPage() {
                                           </div>
                                         )}
               return (
-                <Card key={booking.id}>
+                <Card key={booking.id} className="card-elevated">
                   <CardHeader className="bg-primary/5">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -1555,12 +1562,20 @@ export default function BookingsPage() {
                         {airlines.length > 0 ? (
                           <AirlineLogos airlines={airlines} />
                         ) : (
-                          <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                          <div className="h-10 w-10 rounded-xl bg-background/50 border border-border/50 flex items-center justify-center shadow-inner">
                             <Package className="h-5 w-5 text-primary" />
                           </div>
                         )}
                         <div>
-                          <CardTitle className="text-lg">{booking.name}</CardTitle>
+                          <div className="flex items-center gap-2">
+                            <CardTitle className="text-lg">{booking.name}</CardTitle>
+                            {(() => {
+                              const st = computeBookingStatus(booking);
+                              if (st === 'completed') return <span className="status-badge-completed">Concluída</span>;
+                              if (st === 'partial') return <span className="status-badge-upcoming">Em andamento</span>;
+                              return null;
+                            })()}
+                          </div>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1 flex-wrap">
                             <span className="font-medium text-foreground">{getCompanyName(booking.company_id)}</span>
                             {travelDate && (
@@ -1574,20 +1589,11 @@ export default function BookingsPage() {
                           <div className="text-sm text-muted-foreground mt-2">
                             <span className="font-medium">Passageiros: </span>
                             {(() => {
-                              const names: string[] = [];
-                              if (Array.isArray(booking.flights)) {
-                                for (const f of booking.flights) if (f.passengerName) names.push(f.passengerName);
-                              }
-                              if (names.length === 0 && Array.isArray(booking.hotels)) {
-                                for (const h of booking.hotels) if ((h as any).guestName) names.push((h as any).guestName);
-                              }
-                              const display = names.slice(0, 3);
-                              const rest = Math.max(0, names.length - display.length);
-                              return (
-                                <>
-                                  {display.join(', ')}{rest > 0 ? ` +${rest}` : ''}
-                                </>
-                              );
+                              const pax = consolidatePassengers(booking);
+                              if (pax.length === 0) return <>-</>;
+                              const display = pax.slice(0, 3);
+                              const rest = Math.max(0, pax.length - display.length);
+                              return <>{display.map(p => p.name).join(', ')}{rest > 0 ? ` +${rest}` : ''}</>;
                             })()}
                           </div>
                           <div className="flex items-center gap-2 mt-2">

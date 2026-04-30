@@ -4,13 +4,16 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { CarRentalCard } from '@/components/cards/CarRentalCard';
 import { CarRentalForm } from '@/components/forms/CarRentalForm';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { getCarStatus } from '@/utils/statusUtils';
 
 export default function CarRentalsPage() {
   const { carRentals, bookings, deleteCarRental } = useBooking();
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
 
   const bookingTitleById = useMemo(() => {
     const map: Record<string, string> = {};
@@ -20,24 +23,25 @@ export default function CarRentalsPage() {
 
   const filteredCarRentals = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
-    if (!term) return carRentals;
 
     return carRentals.filter((car) => {
-      const locator = String(car.locator || '').toLowerCase();
-      const company = String(car.company || '').toLowerCase();
-      const carModel = String(car.carModel || '').toLowerCase();
-      const driver = String(car.driverName || '').toLowerCase();
-      const bookingTitle = car.bookingId ? String(bookingTitleById[car.bookingId] || '').toLowerCase() : '';
-
-      return (
-        locator.includes(term) ||
-        company.includes(term) ||
-        carModel.includes(term) ||
-        driver.includes(term) ||
-        bookingTitle.includes(term)
+      const matchesSearch = !term || (
+        String(car.locator || '').toLowerCase().includes(term) ||
+        String(car.company || '').toLowerCase().includes(term) ||
+        String(car.carModel || '').toLowerCase().includes(term) ||
+        String(car.driverName || '').toLowerCase().includes(term) ||
+        (car.bookingId ? String(bookingTitleById[car.bookingId] || '').toLowerCase().includes(term) : false)
       );
+
+      const status = getCarStatus(car);
+      const matchesStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'upcoming' && (status === 'upcoming' || status === 'unknown')) ||
+        (statusFilter === 'completed' && status === 'completed');
+
+      return matchesSearch && matchesStatus;
     });
-  }, [carRentals, searchTerm, bookingTitleById]);
+  }, [carRentals, searchTerm, bookingTitleById, statusFilter]);
 
   return (
     <DashboardLayout>
@@ -47,7 +51,25 @@ export default function CarRentalsPage() {
             <h2 className="text-2xl font-bold text-foreground">Aluguel de Carro</h2>
             <p className="text-muted-foreground">Gerencie todas as reservas de veículos</p>
           </div>
-          {isAdmin ? <CarRentalForm /> : null}
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Filtro Todas / Próximas / Concluídas */}
+            <div className="flex items-center border rounded-lg p-1">
+              {(['all', 'upcoming', 'completed'] as const).map((s) => (
+                <Button
+                  key={s}
+                  variant={statusFilter === s ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setStatusFilter(s)}
+                  className="h-8 px-3 text-xs"
+                >
+                  {s === 'all' ? 'Todas' : s === 'upcoming' ? 'Próximas' : 'Concluídas'}
+                </Button>
+              ))}
+            </div>
+
+            {isAdmin ? <CarRentalForm /> : null}
+          </div>
         </div>
 
         <div className="relative">
@@ -63,22 +85,31 @@ export default function CarRentalsPage() {
         {filteredCarRentals.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground">
-              {searchTerm
+              {searchTerm || statusFilter !== 'all'
                 ? 'Nenhum aluguel encontrado com os filtros aplicados.'
                 : 'Nenhum aluguel de carro cadastrado ainda.'}
             </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {filteredCarRentals.map((car) => (
-              <CarRentalCard
-                key={car.id}
-                carRental={car}
-                bookingTitle={car.bookingId ? bookingTitleById[car.bookingId] : undefined}
-                showBookingLink
-                onDelete={isAdmin ? deleteCarRental : undefined}
-              />
-            ))}
+            {filteredCarRentals.map((car) => {
+              const status = getCarStatus(car);
+              return (
+                <div key={car.id} className="relative">
+                  {status === 'completed' && (
+                    <span className="absolute top-3 right-3 z-10 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium border border-border">
+                      Concluído
+                    </span>
+                  )}
+                  <CarRentalCard
+                    carRental={car}
+                    bookingTitle={car.bookingId ? bookingTitleById[car.bookingId] : undefined}
+                    showBookingLink
+                    onDelete={isAdmin ? deleteCarRental : undefined}
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

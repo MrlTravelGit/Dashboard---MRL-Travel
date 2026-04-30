@@ -130,21 +130,21 @@ export default function CashbackPage() {
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card>
+          <Card className="card-elevated">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Reservas com cashback</p>
                   <p className="text-3xl font-bold text-foreground">{totalReservas}</p>
                 </div>
-                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                <div className="h-12 w-12 rounded-xl bg-background/50 border border-border/50 flex items-center justify-center shadow-inner">
                   <TrendingUp className="h-6 w-6 text-primary" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-primary/10 to-accent/20 border-primary/20">
+          <Card className="card-elevated bg-gradient-to-br from-primary/10 to-accent/20 border-primary/20">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -153,7 +153,7 @@ export default function CashbackPage() {
                     {fmt(totalCashback)}
                   </p>
                 </div>
-                <div className="h-12 w-12 rounded-full bg-accent flex items-center justify-center">
+                <div className="h-12 w-12 rounded-xl bg-background/50 border border-accent/20 flex items-center justify-center shadow-inner">
                   <TrendingUp className="h-6 w-6 text-accent-foreground" />
                 </div>
               </div>
@@ -203,7 +203,7 @@ export default function CashbackPage() {
         ) : (
           <div className="space-y-3">
             {filtered.map((entry) => (
-              <Card key={entry.id}>
+              <Card key={entry.id} className="card-elevated">
                 <CardContent className="p-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="space-y-1 min-w-0">

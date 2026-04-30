@@ -283,61 +283,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     );
 
-    // Ao voltar para a aba, tenta recuperar sessão rapidamente.
-    // Importante: não pode colocar o app em loading infinito.
-    const onVisibility = async () => {
-      if (document.visibilityState !== 'visible') return;
-      if (visibilityRefreshRunningRef.current) return;
-      visibilityRefreshRunningRef.current = true;
-
-      try {
-        const sessionResult = await withTimeout(
-          supabase.auth.getSession(),
-          6000,
-          'getSession(visibilitychange)'
-        );
-        const nextSession: Session | null = (sessionResult as any)?.data?.session ?? null;
-
-        // Atualiza somente se mudou, para evitar loops.
-        const nextUserId = nextSession?.user?.id ?? null;
-        const currentUserId = sessionUserIdRef.current;
-
-        if (nextUserId !== currentUserId) {
-          setSession(nextSession);
-          setUser(nextSession?.user ?? null);
-          sessionUserIdRef.current = nextUserId;
-          setIsAdmin(false);
-          isAdminRef.current = false;
-          setCompanyId(null);
-          setAppRole(null);
-          if (nextUserId) await loadAdminStatus(nextUserId);
-        } else if (nextUserId) {
-          // Mesmo usuário: se o estado de admin caiu por algum motivo, tenta recuperar.
-          // Importante: loadAdminStatus não deve derrubar isAdmin em caso de erro.
-          let lastKnown: string | null = null;
-          try {
-            lastKnown = localStorage.getItem('lastKnownAdmin');
-          } catch {
-            lastKnown = null;
-          }
-          if (!isAdminRef.current && lastKnown === '1') {
-            await loadAdminStatus(nextUserId);
-          }
-        }
-      } catch (e) {
-        if (isDev) console.warn('[AUTH] visibility refresh failed:', e);
-        // Nunca trava o app
-        setAuthReady(true);
-      } finally {
-        visibilityRefreshRunningRef.current = false;
-      }
-    };
-
-    document.addEventListener('visibilitychange', onVisibility);
+    // visibilitychange removido intencionalmente.
+    // O Supabase client (autoRefreshToken: true) cuida do refresh de token em background.
+    // O handler anterior causava re-execução de loadAdminStatus em toda troca de aba,
+    // o que gerava re-renders e o efeito de "reset" da página ao voltar para ela.
 
     return () => {
       authListener.subscription.unsubscribe();
-      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
 

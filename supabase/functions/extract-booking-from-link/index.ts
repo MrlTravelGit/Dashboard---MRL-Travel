@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
+import { requireAuthenticatedUser } from "../_shared/auth.ts";
 import {
   fetchPageText,
   extractPassengers,
@@ -42,6 +43,9 @@ serve(async (req) => {
   }
 
   try {
+    const auth = await requireAuthenticatedUser(req, corsHeaders);
+    if ("response" in auth) return auth.response;
+
     const body = await req.json().catch(() => ({} as any));
     const url = (body?.url || "").toString().trim();
 

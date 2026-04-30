@@ -19,18 +19,23 @@ import LoginPage from "./pages/LoginPage";
 import NotFound from "./pages/NotFound";
 import { LoadingGate } from "@/components/LoadingGate";
 
-const queryClient = new QueryClient();
+// QueryClient estável — criado uma única vez fora do componente para nunca ser recriado
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Desabilita refetch automático ao focar a janela — evita flood de requests ao trocar de aba
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
-// Protected route component - bloqueia se não autenticado
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isLoadingRole, authReady } = useAuth();
 
-  // Aguarda carregar session e role, mas nunca fica preso se authReady está true
   if (!authReady || isLoading || isLoadingRole) {
     return <LoadingGate label="Carregando..." />;
   }
 
-  // Após loading, se não autenticado, redireciona
   if (!user) {
     return <Navigate to="/login" replace />;
   }
@@ -38,17 +43,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Admin route component - bloqueia se não é admin
-// Aguarda role estar carregada antes de redirecionar
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { isAdmin, appRole, isLoadingRole, authReady } = useAuth();
 
-  // Aguarda role estar carregada, mas nunca fica preso se authReady está true
   if (!authReady || isLoadingRole) {
     return <LoadingGate label="Carregando permissões..." />;
   }
 
-  // Após role estar carregada, verifica se é admin
   const isUserAdmin = isAdmin || appRole === "admin";
   if (!isUserAdmin) {
     return <Navigate to="/" replace />;
@@ -57,18 +58,14 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-
-
-// App routes with auth context available
 function AppRoutes() {
-  // Remove duplicated loading logic here, rely on ProtectedRoute
   const { user } = useAuth();
 
   return (
     <Routes>
-      <Route 
-        path="/login" 
-        element={user ? <Navigate to="/" replace /> : <LoginPage />} 
+      <Route
+        path="/login"
+        element={user ? <Navigate to="/" replace /> : <LoginPage />}
       />
       <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
       <Route path="/reservas" element={<ProtectedRoute><BookingsPage /></ProtectedRoute>} />
@@ -78,7 +75,6 @@ function AppRoutes() {
       <Route path="/aluguel-carro" element={<ProtectedRoute><CarRentalsPage /></ProtectedRoute>} />
       <Route path="/cashback" element={<ProtectedRoute><CashbackPage /></ProtectedRoute>} />
       <Route path="/empresas" element={<ProtectedRoute><AdminRoute><CompaniesPage /></AdminRoute></ProtectedRoute>} />
-      {/* Usuários de empresa também devem acessar a aba de Funcionários, porém com filtro por company_id */}
       <Route path="/funcionarios" element={<ProtectedRoute><EmployeesPage /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
@@ -86,21 +82,24 @@ function AppRoutes() {
 }
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-      <TooltipProvider>
-        <AuthProvider>
-          <BookingProvider>
-            <Toaster />
-            <Sonner />
-            <BrowserRouter>
+  // BrowserRouter está no topo, FORA dos providers de auth/booking.
+  // Isso garante que trocar de aba (TOKEN_REFRESHED no Supabase) não cause
+  // remount do Router e consequente reset do estado de navegação/formulários.
+  <BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        <TooltipProvider>
+          <AuthProvider>
+            <BookingProvider>
+              <Toaster />
+              <Sonner />
               <AppRoutes />
-            </BrowserRouter>
-          </BookingProvider>
-        </AuthProvider>
-      </TooltipProvider>
-    </ThemeProvider>
-  </QueryClientProvider>
+            </BookingProvider>
+          </AuthProvider>
+        </TooltipProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
+  </BrowserRouter>
 );
 
 export default App;

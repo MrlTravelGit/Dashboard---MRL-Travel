@@ -79,11 +79,29 @@ export default {
   				to: {
   					height: '0'
   				}
+  			},
+  			blob: {
+  				'0%': { transform: 'translate(0px, 0px) scale(1)' },
+  				'33%': { transform: 'translate(30px, -50px) scale(1.1)' },
+  				'66%': { transform: 'translate(-20px, 20px) scale(0.9)' },
+  				'100%': { transform: 'translate(0px, 0px) scale(1)' }
+  			},
+  			'gradient-x': {
+  				'0%, 100%': {
+  					'background-size': '200% 200%',
+  					'background-position': 'left center'
+  				},
+  				'50%': {
+  					'background-size': '200% 200%',
+  					'background-position': 'right center'
+  				}
   			}
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
-  			'accordion-up': 'accordion-up 0.2s ease-out'
+  			'accordion-up': 'accordion-up 0.2s ease-out',
+  			blob: 'blob 7s infinite',
+  			'gradient-x': 'gradient-x 15s ease infinite'
   		},
   		boxShadow: {
   			'2xs': 'var(--shadow-2xs)',
@@ -128,6 +146,11 @@ export default {
   				'Courier New',
   				'monospace'
   			]
+  		},
+  		backgroundImage: {
+  			'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+  			'mesh-light': 'radial-gradient(at 40% 20%, hsla(200, 98%, 39%, 0.08) 0px, transparent 50%), radial-gradient(at 80% 0%, hsla(215, 24%, 26%, 0.05) 0px, transparent 50%), radial-gradient(at 0% 50%, hsla(200, 98%, 39%, 0.05) 0px, transparent 50%)',
+  			'mesh-dark': 'radial-gradient(at 40% 20%, hsla(198, 93%, 59%, 0.15) 0px, transparent 50%), radial-gradient(at 80% 0%, hsla(212, 26%, 83%, 0.1) 0px, transparent 50%), radial-gradient(at 0% 50%, hsla(198, 93%, 59%, 0.1) 0px, transparent 50%)',
   		}
   	}
   },

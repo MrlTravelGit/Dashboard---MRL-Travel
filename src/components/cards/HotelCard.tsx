@@ -109,7 +109,7 @@ export function HotelCard({ hotel, showSavings = true, viewMode = 'card', onDele
   }
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden card-elevated">
       <CardHeader className="bg-secondary text-secondary-foreground py-3 px-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

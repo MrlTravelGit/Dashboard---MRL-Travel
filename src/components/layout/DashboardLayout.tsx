@@ -50,10 +50,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full bg-background">
+      <div className="min-h-screen flex w-full">
         <AppSidebar />
         <div className="flex-1 flex flex-col">
-          <header className="h-16 border-b border-border bg-card flex items-center justify-between px-4 sm:px-6">
+          <header className="h-16 border-b border-border/50 bg-card/70 backdrop-blur-md flex items-center justify-between px-4 sm:px-6">
             <div className="flex items-center gap-4">
               <SidebarTrigger className="text-foreground" />
               <div className="flex items-center gap-3 min-w-0">

@@ -42,6 +42,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
+import { requireAuthenticatedUser } from "../_shared/auth.ts";
 function normalizeText(s: string) {
   return s
     .replace(/\u00a0/g, " ")
@@ -1718,6 +1719,9 @@ serve(async (req: Request) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
   try {
+    const auth = await requireAuthenticatedUser(req, corsHeaders);
+    if ("response" in auth) return auth.response;
+
     const bodyText = await req.text();
     const body = bodyText ? JSON.parse(bodyText) : null;
     const url = body?.url;

@@ -3,6 +3,22 @@
 
 export function buildCorsHeaders(req: Request): Record<string, string> {
   const originHeader = req.headers.get("origin");
+  const allowedOrigins = new Set(
+    (Deno.env.get("ALLOWED_ORIGINS") || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  );
+
+  const vercelUrl = Deno.env.get("VERCEL_URL");
+  if (vercelUrl) allowedOrigins.add(`https://${vercelUrl}`);
+
+  allowedOrigins.add("http://localhost:5173");
+  allowedOrigins.add("http://127.0.0.1:5173");
+  allowedOrigins.add("http://localhost:4173");
+  allowedOrigins.add("http://127.0.0.1:4173");
+
+  const isAllowedOrigin = !!originHeader && allowedOrigins.has(originHeader);
   const origin = originHeader || "*";
 
   // The browser sends this header on preflight, listing what it wants to send.
@@ -26,9 +42,9 @@ export function buildCorsHeaders(req: Request): Record<string, string> {
 
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Credentials": originHeader ? "true" : "false",
+    "Access-Control-Allow-Credentials": isAllowedOrigin ? "true" : "false",
     "Access-Control-Allow-Headers": allowHeaders,
-    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Vary": "Origin",
   };
 }

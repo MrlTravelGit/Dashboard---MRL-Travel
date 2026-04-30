@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
+import { requireAuthenticatedUser } from "../_shared/auth.ts";
 
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req);
@@ -8,6 +9,9 @@ serve(async (req) => {
   }
 
   try {
+    const auth = await requireAuthenticatedUser(req, corsHeaders);
+    if ("response" in auth) return auth.response;
+
     const { imageBase64, mimeType } = await req.json();
 
     if (!imageBase64) {

@@ -116,7 +116,7 @@ export function FlightCard({ flight, showSavings = true, viewMode = 'card', onDe
   }
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden card-elevated">
       <CardHeader className={`${airlineColors[flight.airline]} text-primary-foreground py-3 px-4`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
