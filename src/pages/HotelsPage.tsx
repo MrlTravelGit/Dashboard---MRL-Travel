@@ -4,18 +4,36 @@ import { HotelCard } from '@/components/cards/HotelCard';
 import { HotelForm } from '@/components/forms/HotelForm';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { getHotelStatus } from '@/utils/statusUtils';
 
+interface Company {
+  id: string;
+  name: string;
+}
+
 export default function HotelsPage() {
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompany, setSelectedCompany] = useState<string>('all');
 
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Carrega lista de empresas para o filtro do admin
+  useEffect(() => {
+    if (!isAdmin) return;
+    const load = async () => {
+      const { data } = await supabase.from('companies').select('id, name').order('name');
+      setCompanies((data as Company[]) ?? []);
+    };
+    load();
+  }, [isAdmin]);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,8 +42,8 @@ export default function HotelsPage() {
       setLoading(true);
       try {
         const selectCandidates = [
-          'id, name, hotels, passengers, main_passenger_name, created_at',
-          'id, name, hotels, passengers, created_at',
+          'id, company_id, name, hotels, passengers, main_passenger_name, created_at',
+          'id, company_id, name, hotels, passengers, created_at',
         ];
 
         let lastError: any = null;
@@ -101,6 +119,7 @@ export default function HotelsPage() {
         out.push({
           ...h,
           booking_id: b.id,
+          company_id: b.company_id,
           hotel_index: idx,
           guest_name: guestFromHotel || fallbackGuest,
           hotel_display_name: h.hotel_display_name || h.hotel_name || h.hotelName || h.name || '',
@@ -137,14 +156,16 @@ export default function HotelsPage() {
       (hotel.hotel_display_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (hotel.guest_name || '').toLowerCase().includes(searchTerm.toLowerCase());
 
+    const matchesCompany = !isAdmin || selectedCompany === 'all' || hotel.company_id === selectedCompany;
+
     const status = getHotelStatus(hotel);
     const matchesStatus =
       statusFilter === 'all' ||
       (statusFilter === 'upcoming' && (status === 'upcoming' || status === 'unknown')) ||
       (statusFilter === 'completed' && status === 'completed');
 
-    return matchesSearch && matchesStatus;
-  }), [hotels, searchTerm, statusFilter]);
+    return matchesSearch && matchesCompany && matchesStatus;
+  }), [hotels, searchTerm, statusFilter, selectedCompany, isAdmin]);
 
   return (
     <DashboardLayout>
@@ -156,6 +177,21 @@ export default function HotelsPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Filtro por empresa — somente admin */}
+            {isAdmin && companies.length > 0 && (
+              <Select value={selectedCompany} onValueChange={setSelectedCompany}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder="Todas as empresas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as empresas</SelectItem>
+                  {companies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
             {/* Filtro Todas / Próximas / Concluídas */}
             <div className="flex items-center border rounded-lg p-1">
               {(['all', 'upcoming', 'completed'] as const).map((s) => (
@@ -194,7 +230,7 @@ export default function HotelsPage() {
         ) : filteredHotels.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground">
-              {searchTerm || statusFilter !== 'all'
+              {searchTerm || statusFilter !== 'all' || selectedCompany !== 'all'
                 ? 'Nenhuma hospedagem encontrada com os filtros aplicados.'
                 : 'Nenhuma hospedagem cadastrada ainda.'}
             </p>

@@ -12,7 +12,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { Flight } from '@/types/booking';
 import { getFlightStatus, type ItemStatus } from '@/utils/statusUtils';
 
-type FlightRow = Flight & { __booking_id: string };
+type FlightRow = Flight & { __booking_id: string; __company_id: string };
+
+interface Company {
+  id: string;
+  name: string;
+}
 
 export default function FlightsPage() {
   const { toast } = useToast();
@@ -22,6 +27,18 @@ export default function FlightsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [airlineFilter, setAirlineFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompany, setSelectedCompany] = useState<string>('all');
+
+  // Carrega lista de empresas para o filtro do admin
+  useEffect(() => {
+    if (!isAdmin) return;
+    const load = async () => {
+      const { data } = await supabase.from('companies').select('id, name').order('name');
+      setCompanies((data as Company[]) ?? []);
+    };
+    load();
+  }, [isAdmin]);
 
   const fetchFlights = async () => {
     if (!user) return;
@@ -30,7 +47,7 @@ export default function FlightsPage() {
     try {
       const { data, error } = await supabase
         .from('bookings')
-        .select('id, flights')
+        .select('id, company_id, flights')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -40,7 +57,7 @@ export default function FlightsPage() {
         const bookingFlights = (booking.flights as unknown as Flight[]) || [];
         bookingFlights.forEach((f, index) => {
           const flightId = f.id || `${booking.id}:${index}`;
-          rows.push({ ...f, id: flightId, __booking_id: booking.id });
+          rows.push({ ...f, id: flightId, __booking_id: booking.id, __company_id: booking.company_id });
         });
       }
       setFlights(rows);
@@ -120,14 +137,16 @@ export default function FlightsPage() {
 
     const matchesAirline = airlineFilter === 'all' || flight.airline === airlineFilter;
 
+    const matchesCompany = !isAdmin || selectedCompany === 'all' || flight.__company_id === selectedCompany;
+
     const status = getFlightStatus(flight);
     const matchesStatus =
       statusFilter === 'all' ||
       (statusFilter === 'upcoming' && (status === 'upcoming' || status === 'unknown')) ||
       (statusFilter === 'completed' && status === 'completed');
 
-    return matchesSearch && matchesAirline && matchesStatus;
-  }), [flights, searchTerm, airlineFilter, statusFilter]);
+    return matchesSearch && matchesAirline && matchesCompany && matchesStatus;
+  }), [flights, searchTerm, airlineFilter, statusFilter, selectedCompany, isAdmin]);
 
   return (
     <DashboardLayout>
@@ -139,6 +158,21 @@ export default function FlightsPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Filtro por empresa — somente admin */}
+            {isAdmin && companies.length > 0 && (
+              <Select value={selectedCompany} onValueChange={setSelectedCompany}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder="Todas as empresas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as empresas</SelectItem>
+                  {companies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
             {/* Filtro Todas / Próximas / Concluídas */}
             <div className="flex items-center border rounded-lg p-1">
               {(['all', 'upcoming', 'completed'] as const).map((s) => (
@@ -190,7 +224,7 @@ export default function FlightsPage() {
         ) : filteredFlights.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground">
-              {searchTerm || airlineFilter !== 'all' || statusFilter !== 'all'
+              {searchTerm || airlineFilter !== 'all' || statusFilter !== 'all' || selectedCompany !== 'all'
                 ? 'Nenhum voo encontrado com os filtros aplicados.'
                 : 'Nenhum voo cadastrado ainda.'}
             </p>

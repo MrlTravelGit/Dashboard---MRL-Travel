@@ -1,23 +1,49 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useBooking } from '@/contexts/BookingContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { CarRentalCard } from '@/components/cards/CarRentalCard';
 import { CarRentalForm } from '@/components/forms/CarRentalForm';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { getCarStatus } from '@/utils/statusUtils';
+
+interface Company {
+  id: string;
+  name: string;
+}
 
 export default function CarRentalsPage() {
   const { carRentals, bookings, deleteCarRental } = useBooking();
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedCompany, setSelectedCompany] = useState<string>('all');
+
+  // Carrega lista de empresas para o filtro do admin
+  useEffect(() => {
+    if (!isAdmin) return;
+    const load = async () => {
+      const { data } = await supabase.from('companies').select('id, name').order('name');
+      setCompanies((data as Company[]) ?? []);
+    };
+    load();
+  }, [isAdmin]);
 
   const bookingTitleById = useMemo(() => {
     const map: Record<string, string> = {};
     for (const b of bookings) map[b.id] = b.title;
+    return map;
+  }, [bookings]);
+
+  // Mapa de bookingId -> company_id para filtrar aluguéis
+  const bookingCompanyById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const b of bookings) map[b.id] = b.company_id;
     return map;
   }, [bookings]);
 
@@ -33,15 +59,20 @@ export default function CarRentalsPage() {
         (car.bookingId ? String(bookingTitleById[car.bookingId] || '').toLowerCase().includes(term) : false)
       );
 
+      const matchesCompany =
+        !isAdmin ||
+        selectedCompany === 'all' ||
+        (car.bookingId && bookingCompanyById[car.bookingId] === selectedCompany);
+
       const status = getCarStatus(car);
       const matchesStatus =
         statusFilter === 'all' ||
         (statusFilter === 'upcoming' && (status === 'upcoming' || status === 'unknown')) ||
         (statusFilter === 'completed' && status === 'completed');
 
-      return matchesSearch && matchesStatus;
+      return matchesSearch && matchesCompany && matchesStatus;
     });
-  }, [carRentals, searchTerm, bookingTitleById, statusFilter]);
+  }, [carRentals, searchTerm, bookingTitleById, bookingCompanyById, statusFilter, selectedCompany, isAdmin]);
 
   return (
     <DashboardLayout>
@@ -53,6 +84,21 @@ export default function CarRentalsPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Filtro por empresa — somente admin */}
+            {isAdmin && companies.length > 0 && (
+              <Select value={selectedCompany} onValueChange={setSelectedCompany}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder="Todas as empresas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as empresas</SelectItem>
+                  {companies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
             {/* Filtro Todas / Próximas / Concluídas */}
             <div className="flex items-center border rounded-lg p-1">
               {(['all', 'upcoming', 'completed'] as const).map((s) => (
@@ -85,7 +131,7 @@ export default function CarRentalsPage() {
         {filteredCarRentals.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground">
-              {searchTerm || statusFilter !== 'all'
+              {searchTerm || statusFilter !== 'all' || selectedCompany !== 'all'
                 ? 'Nenhum aluguel encontrado com os filtros aplicados.'
                 : 'Nenhum aluguel de carro cadastrado ainda.'}
             </p>

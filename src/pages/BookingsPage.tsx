@@ -45,6 +45,7 @@ export default function BookingsPage() {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
+  const [selectedCompany, setSelectedCompany] = useState<string>('all');
   const [open, setOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'card' | 'landscape'>('card');
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -869,6 +870,7 @@ export default function BookingsPage() {
   const filteredBookings = bookings.filter(booking => {
     const matchesSearch = booking.name.toLowerCase().includes(searchTerm.toLowerCase());
     if (!matchesSearch) return false;
+    if (isAdmin && selectedCompany !== 'all' && booking.company_id !== selectedCompany) return false;
     if (statusFilter === 'all') return true;
     const status = computeBookingStatus(booking);
     if (statusFilter === 'upcoming') return status === 'upcoming' || status === 'partial' || status === 'unknown';
@@ -947,7 +949,21 @@ export default function BookingsPage() {
             <p className="text-muted-foreground">Todas as reservas consolidadas com voos, hotéis e carros</p>
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Filtro por empresa — somente admin */}
+            {isAdmin && companies.length > 0 && (
+              <Select value={selectedCompany} onValueChange={setSelectedCompany}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder="Todas as empresas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as empresas</SelectItem>
+                  {companies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {/* Filtro de status: Todas / Próximas / Concluídas */}
             <div className="flex items-center border rounded-lg p-1">
               {(['all', 'upcoming', 'completed'] as const).map((s) => (
