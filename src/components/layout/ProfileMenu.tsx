@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { User, LogOut, KeyRound, Loader2 } from 'lucide-react';
+import { User, LogOut, KeyRound, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface Profile {
@@ -30,7 +30,7 @@ interface Profile {
 }
 
 export function ProfileMenu() {
-  const { user, signOut, isAdmin } = useAuth();
+  const { user, signOut, isAdmin, isLoadingRole, adminCheckError, retryAdminCheck } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -139,7 +139,7 @@ export function ProfileMenu() {
             <div className="flex flex-col space-y-1">
               <p className="text-sm font-medium leading-none">{displayName}</p>
               <p className="text-xs leading-none text-muted-foreground">{displayEmail}</p>
-              {isAdmin && (
+              {isAdmin === true && (
                 <span className="text-xs text-primary font-medium">Administrador</span>
               )}
             </div>
@@ -180,7 +180,7 @@ export function ProfileMenu() {
               <div>
                 <h3 className="font-semibold text-lg">{displayName}</h3>
                 <p className="text-sm text-muted-foreground">{displayEmail}</p>
-                {isAdmin && (
+                {isAdmin === true && (
                   <span className="inline-flex items-center px-2 py-0.5 mt-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
                     Administrador
                   </span>
@@ -196,9 +196,33 @@ export function ProfileMenu() {
                 <span className="text-sm text-muted-foreground">Email</span>
                 <span className="text-sm font-medium">{displayEmail}</span>
               </div>
-              <div className="flex justify-between py-2">
+              <div className="flex justify-between items-center py-2">
                 <span className="text-sm text-muted-foreground">Tipo de conta</span>
-                <span className="text-sm font-medium">{isAdmin === null ? 'Verificando...' : isAdmin ? 'Administrador' : 'Usuário'}</span>
+                {isLoadingRole || isAdmin === null ? (
+                  <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Validando…
+                  </span>
+                ) : adminCheckError ? (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 text-sm text-destructive">
+                      <AlertCircle className="h-3.5 w-3.5" />
+                      Erro
+                    </span>
+                    <button
+                      type="button"
+                      onClick={retryAdminCheck}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Tentar novamente
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-sm font-medium">
+                    {isAdmin ? 'Administrador' : 'Usuário'}
+                  </span>
+                )}
               </div>
             </div>
           </div>

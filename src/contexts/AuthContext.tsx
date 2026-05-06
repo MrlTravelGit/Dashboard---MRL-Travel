@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from "react";
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -13,13 +13,12 @@ interface AuthContextType {
   isLoading: boolean;
   isLoadingRole: boolean;
   authReady: boolean;
+  adminCheckError: string | null; // null = sem erro, string = mensagem de erro
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (
-    email: string,
-    password: string,
-    fullName: string
-  ) => Promise<{ error: Error | null }>;
+  signUp:
+    (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
+  retryAdminCheck: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -35,12 +34,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingRole, setIsLoadingRole] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [adminCheckError, setAdminCheckError] = useState<string | null>(null);
 
   const lastRoleLoadForUserRef = useRef<string | null>(null);
   const sessionUserIdRef = useRef<string | null>(null);
   const isAdminRef = useRef<boolean | null>(null);
 
-  // Guard para evitar reentrância de loadRoleAndCompany
+  // Guard para evitar reentrância de loadAdminStatus
   const loadingRoleRef = useRef<string | null>(null);
 
   // Tracks whether loadAdminStatus has successfully resolved for a given userId.
@@ -48,6 +48,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // avoiding the setIsLoadingRole(true) → ProtectedRoute unmount → reset cascade.
   const roleResolvedForUserRef = useRef<string | null>(null);
 
+  // Flag to prevent onAuthStateChange from setting authReady while init() is still running.
+  const initRunningRef = useRef(true);
 
 
   const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
@@ -62,16 +64,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Detecta erros transitórios que justificam retry (timeout, rede, 5xx)
+  // Detecta erros transitórios que justificam retry (timeout, rede, 5xx, auth expirado)
   const isTransientError = (err: unknown): boolean => {
     if (err instanceof Error) {
       const msg = err.message.toLowerCase();
       if (msg.includes('timeout') || msg.includes('abort') || msg.includes('networkerror') || msg.includes('failed to fetch')) return true;
     }
-    // Supabase errors com status 5xx
+    // Supabase errors com status 5xx ou 401/403 (token expirado durante session restore)
     if (typeof err === 'object' && err !== null && 'status' in err) {
       const status = (err as any).status;
-      if (typeof status === 'number' && status >= 500) return true;
+      if (typeof status === 'number' && (status >= 500 || status === 401 || status === 403)) return true;
+    }
+    // Supabase PostgREST error with code/message indicating auth issue
+    if (typeof err === 'object' && err !== null && 'code' in err) {
+      const code = (err as any).code;
+      if (code === 'PGRST301' || code === '401' || code === '403') return true;
     }
     return false;
   };
@@ -80,19 +87,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Carrega status de admin e companyId
   const loadAdminStatus = async (userId: string, { force = false }: { force?: boolean } = {}) => {
-    // Evita chamadas duplicadas para o mesmo userId em sequência
-    if (lastRoleLoadForUserRef.current === userId && (isLoadingRole || loadingRoleRef.current === userId)) {
+    // Evita chamadas duplicadas concorrentes para o mesmo userId
+    if (loadingRoleRef.current === userId) {
+      if (isDev) console.log('[AUTH] loadAdminStatus skipped: already loading for', userId);
       return;
     }
 
     // Se o role já foi resolvido com sucesso para este user e não é force,
     // não refaz a query — evita flash de loading ao trocar de aba.
     if (!force && roleResolvedForUserRef.current === userId) {
+      if (isDev) console.log('[AUTH] loadAdminStatus skipped: already resolved for', userId);
       return;
     }
 
+    loadingRoleRef.current = userId;
     lastRoleLoadForUserRef.current = userId;
     setIsLoadingRole(true);
+    setAdminCheckError(null);
+
     try {
       let isAdminValue = false;
       let lastError: unknown = null;
@@ -139,17 +151,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
           // Só faz retry para erros transitórios e se não for a última tentativa
           if (isTransientError(e) && attempt < MAX_RETRIES) {
-            await delay(1000);
+            await delay(1000 * (attempt + 1)); // backoff progressivo
             continue;
           }
           // Erro não-transitório ou última tentativa — para de tentar
           break;
         }
       }
+
       if (!lastError) {
         setIsAdmin(isAdminValue);
         isAdminRef.current = isAdminValue;
         setAppRole(isAdminValue ? 'admin' : 'user');
+        setAdminCheckError(null);
         // Mark role as successfully resolved for this user
         roleResolvedForUserRef.current = userId;
         try {
@@ -191,24 +205,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } else {
-        // Erro persistente: isAdmin fica null ("verificando") em vez de cair em false
+        // Erro persistente após retries: define isAdmin como false para destravar a UI,
+        // mas seta adminCheckError para que a UI mostre botão de retry.
+        const errorMsg = lastError instanceof Error ? lastError.message : 'Erro ao verificar permissões';
         if (isDev) {
-          console.error(`[AUTH] loadAdminStatus erro após retries, isAdmin permanece null:`, lastError);
+          console.error(`[AUTH] loadAdminStatus erro após retries:`, lastError);
         }
-        // Não seta isAdmin=false — mantém null para que a UI mostre estado de verificação
+        setIsAdmin(false);
+        isAdminRef.current = false;
+        setAppRole('user');
+        setAdminCheckError(errorMsg);
+        // NÃO marca como resolvido — permitir retry manual
+        roleResolvedForUserRef.current = null;
       }
     } catch (e) {
       if (isDev) {
         console.error(`[AUTH] loadAdminStatus erro inesperado:`, e);
       }
+      const errorMsg = e instanceof Error ? e.message : 'Erro inesperado ao verificar permissões';
+      setIsAdmin(false);
+      isAdminRef.current = false;
+      setAppRole('user');
+      setAdminCheckError(errorMsg);
+      roleResolvedForUserRef.current = null;
     } finally {
       loadingRoleRef.current = null;
       setIsLoadingRole(false);
     }
   };
 
+  // Função de retry exposta ao consumidor (ProfileMenu, etc.)
+  const retryAdminCheck = useCallback(() => {
+    const userId = sessionUserIdRef.current;
+    if (!userId) return;
+    if (isDev) console.log('[AUTH] retryAdminCheck triggered for', userId);
+    // Limpa role resolvido para forçar re-execução
+    roleResolvedForUserRef.current = null;
+    void loadAdminStatus(userId, { force: true });
+  }, []);
+
   useEffect(() => {
+    let cancelled = false;
+
     const init = async () => {
+      initRunningRef.current = true;
       setIsLoading(true);
       setIsLoadingRole(false);
       
@@ -225,6 +265,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         );
         const { data, error } = sessionResult as any;
 
+        if (cancelled) return;
+
         if (error) {
           if (isDev) {
             console.error("[AUTH] getSession error:", error);
@@ -236,6 +278,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setAppRole(null);
           setIsLoading(false);
           setAuthReady(true);
+          initRunningRef.current = false;
           return;
         }
 
@@ -255,7 +298,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // CRITICAL FIX: resolve admin status ANTES de setar authReady.
           // Isso impede que a UI renderize com isAdmin=null/false antes da verificação.
           await loadAdminStatus(currentSession.user.id);
-          setAuthReady(true);
+          if (!cancelled) {
+            setAuthReady(true);
+          }
         } else {
           // Sem usuário autenticado, reseta estado
           setIsAdmin(false);
@@ -268,15 +313,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (isDev) {
           console.error("[AUTH] Auth init falhou:", e);
         }
-        // Mantém app utilizável - timeout/erro de rede não força logout
-        setUser(null);
-        setSession(null);
-        setIsAdmin(null);
-        isAdminRef.current = null;
-        setCompanyId(null);
-        setAppRole(null);
-        setIsLoading(false);
-        setAuthReady(true);
+        if (!cancelled) {
+          // Mantém app utilizável - timeout/erro de rede não força logout
+          setUser(null);
+          setSession(null);
+          setIsAdmin(null);
+          isAdminRef.current = null;
+          setCompanyId(null);
+          setAppRole(null);
+          setIsLoading(false);
+          setAuthReady(true);
+        }
+      } finally {
+        initRunningRef.current = false;
       }
     };
 
@@ -307,6 +356,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             isAdminRef.current = null;
             setCompanyId(null);
             setAppRole(null);
+            setAdminCheckError(null);
             roleResolvedForUserRef.current = null;
             await loadAdminStatus(nextUserId, { force: true });
           }
@@ -319,11 +369,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           isAdminRef.current = null;
           setCompanyId(null);
           setAppRole(null);
+          setAdminCheckError(null);
           roleResolvedForUserRef.current = null;
         }
 
-        setIsLoading(false);
-        setAuthReady(true);
+        // Só seta authReady/isLoading aqui se init() já terminou.
+        // Se init() ainda está rodando, ele cuidará de setar authReady
+        // após loadAdminStatus completar — evitando a race condition.
+        if (!initRunningRef.current) {
+          setIsLoading(false);
+          setAuthReady(true);
+        }
       }
     );
 
@@ -333,6 +389,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // o que gerava re-renders e o efeito de "reset" da página ao voltar para ela.
 
     return () => {
+      cancelled = true;
       authListener.subscription.unsubscribe();
     };
   }, []);
@@ -364,6 +421,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAdminRef.current = null;
     setCompanyId(null);
     setAppRole(null);
+    setAdminCheckError(null);
     setIsLoading(false);
     setIsLoadingRole(false);
     setAuthReady(false);
@@ -384,9 +442,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         isLoadingRole,
         authReady,
+        adminCheckError,
         signIn,
         signUp,
         signOut,
+        retryAdminCheck,
       }}
     >
       {children}
