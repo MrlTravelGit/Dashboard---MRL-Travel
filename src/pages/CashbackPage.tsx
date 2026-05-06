@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { usePersistedState } from '@/hooks/usePersistedState';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -41,7 +42,7 @@ export default function CashbackPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCompany, setSelectedCompany] = useState<string>('all');
+  const [selectedCompany, setSelectedCompany] = usePersistedState<string>('cashback:selectedCompany', 'all');
 
   // Carrega lista de empresas (admin: todas; não-admin: próprias)
   useEffect(() => {

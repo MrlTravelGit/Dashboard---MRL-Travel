@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { usePersistedState } from '@/hooks/usePersistedState';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBooking } from '@/contexts/BookingContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
@@ -44,10 +45,10 @@ export default function BookingsPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
-  const [selectedCompany, setSelectedCompany] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = usePersistedState<'all' | 'upcoming' | 'completed'>('bookings:statusFilter', 'all');
+  const [selectedCompany, setSelectedCompany] = usePersistedState<string>('bookings:selectedCompany', 'all');
   const [open, setOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'card' | 'landscape'>('card');
+  const [viewMode, setViewMode] = usePersistedState<'card' | 'landscape'>('bookings:viewMode', 'card');
   const [companies, setCompanies] = useState<Company[]>([]);
   const [bookings, setBookings] = useState<BookingFromDB[]>([]);
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(true);

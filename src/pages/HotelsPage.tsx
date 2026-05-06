@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { usePersistedState } from '@/hooks/usePersistedState';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HotelCard } from '@/components/cards/HotelCard';
 import { HotelForm } from '@/components/forms/HotelForm';
@@ -18,9 +19,9 @@ interface Company {
 export default function HotelsPage() {
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
+  const [statusFilter, setStatusFilter] = usePersistedState<'all' | 'upcoming' | 'completed'>('hotels:statusFilter', 'all');
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [selectedCompany, setSelectedCompany] = useState<string>('all');
+  const [selectedCompany, setSelectedCompany] = usePersistedState<string>('hotels:selectedCompany', 'all');
 
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

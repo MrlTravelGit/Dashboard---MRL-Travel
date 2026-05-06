@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { usePersistedState } from '@/hooks/usePersistedState';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { FlightCard } from '@/components/cards/FlightCard';
 import { FlightForm } from '@/components/forms/FlightForm';
@@ -25,10 +26,10 @@ export default function FlightsPage() {
   const [flights, setFlights] = useState<FlightRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [airlineFilter, setAirlineFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
+  const [airlineFilter, setAirlineFilter] = usePersistedState<string>('flights:airlineFilter', 'all');
+  const [statusFilter, setStatusFilter] = usePersistedState<'all' | 'upcoming' | 'completed'>('flights:statusFilter', 'all');
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [selectedCompany, setSelectedCompany] = useState<string>('all');
+  const [selectedCompany, setSelectedCompany] = usePersistedState<string>('flights:selectedCompany', 'all');
 
   // Carrega lista de empresas para o filtro do admin
   useEffect(() => {

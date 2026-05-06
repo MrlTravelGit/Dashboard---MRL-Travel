@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { usePersistedState } from '@/hooks/usePersistedState';
 import { useBooking } from '@/contexts/BookingContext';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { CarRentalCard } from '@/components/cards/CarRentalCard';
@@ -20,9 +21,9 @@ export default function CarRentalsPage() {
   const { carRentals, bookings, deleteCarRental } = useBooking();
   const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
+  const [statusFilter, setStatusFilter] = usePersistedState<'all' | 'upcoming' | 'completed'>('cars:statusFilter', 'all');
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [selectedCompany, setSelectedCompany] = useState<string>('all');
+  const [selectedCompany, setSelectedCompany] = usePersistedState<string>('cars:selectedCompany', 'all');
 
   // Carrega lista de empresas para o filtro do admin
   useEffect(() => {

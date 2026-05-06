@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { usePersistedState } from '@/hooks/usePersistedState';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { TrendingUp, Package, Building2 } from 'lucide-react';
@@ -31,7 +32,7 @@ export default function HomePage() {
 
   const [bookings, setBookings] = useState<BookingFromDB[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [selectedCompany, setSelectedCompany] = useState<string>('all');
+  const [selectedCompany, setSelectedCompany] = usePersistedState<string>('home:selectedCompany', 'all');
   const [totalCashback, setTotalCashback] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
 

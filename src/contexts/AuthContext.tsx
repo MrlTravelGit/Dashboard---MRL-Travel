@@ -26,10 +26,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const isDev = import.meta.env.DEV;
 
-
-let authInitCount = 0;
-let authListenerCount = 0;
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -41,12 +37,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authReady, setAuthReady] = useState(false);
 
   const lastRoleLoadForUserRef = useRef<string | null>(null);
-  const visibilityRefreshRunningRef = useRef(false);
   const sessionUserIdRef = useRef<string | null>(null);
   const isAdminRef = useRef<boolean>(false);
 
   // Guard para evitar reentrância de loadRoleAndCompany
   const loadingRoleRef = useRef<string | null>(null);
+
+  // Tracks whether loadAdminStatus has successfully resolved for a given userId.
+  // When true for the current user, TOKEN_REFRESHED skips the re-load entirely,
+  // avoiding the setIsLoadingRole(true) → ProtectedRoute unmount → reset cascade.
+  const roleResolvedForUserRef = useRef<string | null>(null);
 
 
 
@@ -63,9 +63,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Carrega status de admin e companyId
-  const loadAdminStatus = async (userId: string) => {
+  const loadAdminStatus = async (userId: string, { force = false }: { force?: boolean } = {}) => {
     // Evita chamadas duplicadas para o mesmo userId em sequência
     if (lastRoleLoadForUserRef.current === userId && (isLoadingRole || loadingRoleRef.current === userId)) {
+      return;
+    }
+
+    // Se o role já foi resolvido com sucesso para este user e não é force,
+    // não refaz a query — evita flash de loading ao trocar de aba.
+    if (!force && roleResolvedForUserRef.current === userId) {
       return;
     }
 
@@ -116,6 +122,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsAdmin(isAdminValue);
         isAdminRef.current = isAdminValue;
         setAppRole(isAdminValue ? 'admin' : 'user');
+        // Mark role as successfully resolved for this user
+        roleResolvedForUserRef.current = userId;
         try {
           if (isAdminValue) {
             localStorage.setItem('lastKnownAdmin', '1');
@@ -260,22 +268,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log("[AUTH] userId:", newSession?.user?.id);
         }
 
-        // Só reseta permissões quando realmente mudou de usuário.
-        // Em eventos como TOKEN_REFRESHED, manter o estado evita "perder admin" por falha temporária.
         if (nextUserId) {
           if (nextUserId !== prevUserId) {
+            // Mudou de usuário: resetar permissões e recarregar
             setIsAdmin(false);
             isAdminRef.current = false;
             setCompanyId(null);
             setAppRole(null);
+            roleResolvedForUserRef.current = null;
+            await loadAdminStatus(nextUserId, { force: true });
           }
-          await loadAdminStatus(nextUserId);
+          // TOKEN_REFRESHED / INITIAL_SESSION com mesmo user:
+          // NÃO recarregar admin status — evita flash de loading e unmount das rotas.
+          // O role já foi carregado com sucesso no init() ou no login anterior.
         } else {
           // Logout
           setIsAdmin(false);
           isAdminRef.current = false;
           setCompanyId(null);
           setAppRole(null);
+          roleResolvedForUserRef.current = null;
         }
 
         setIsLoading(false);
