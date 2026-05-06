@@ -198,7 +198,7 @@ export function ProfileMenu() {
               </div>
               <div className="flex justify-between py-2">
                 <span className="text-sm text-muted-foreground">Tipo de conta</span>
-                <span className="text-sm font-medium">{isAdmin ? 'Administrador' : 'Usuário'}</span>
+                <span className="text-sm font-medium">{isAdmin === null ? 'Verificando...' : isAdmin ? 'Administrador' : 'Usuário'}</span>
               </div>
             </div>
           </div>

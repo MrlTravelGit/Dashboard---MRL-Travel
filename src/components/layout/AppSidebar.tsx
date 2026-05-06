@@ -35,8 +35,8 @@ export function AppSidebar() {
   // - E (isAdmin === true OU appRole === "admin")
   //
   // Enquanto carrega: não mostra, para evitar carregar página admin e depois esconder
-  const isUserAdmin = isAdmin || appRole === 'admin';
-  const canViewAdminItems = !isLoadingRole && isUserAdmin;
+  const isUserAdmin = isAdmin === true || appRole === 'admin';
+  const canViewAdminItems = !isLoadingRole && isAdmin !== null && isUserAdmin;
 
   const visibleMenuItems = menuItems.filter(
     (item) => !item.adminOnly || canViewAdminItems

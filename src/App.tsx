@@ -46,11 +46,12 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { isAdmin, appRole, isLoadingRole, authReady } = useAuth();
 
-  if (!authReady || isLoadingRole) {
+  // isAdmin === null significa "ainda verificando" — não redireciona prematuramente
+  if (!authReady || isLoadingRole || isAdmin === null) {
     return <LoadingGate label="Carregando permissões..." />;
   }
 
-  const isUserAdmin = isAdmin || appRole === "admin";
+  const isUserAdmin = isAdmin === true || appRole === "admin";
   if (!isUserAdmin) {
     return <Navigate to="/" replace />;
   }
