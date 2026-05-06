@@ -30,7 +30,7 @@ interface Profile {
 }
 
 export function ProfileMenu() {
-  const { user, signOut, isAdmin, isLoadingRole, adminCheckError, retryAdminCheck } = useAuth();
+  const { user, signOut, isAdmin, adminCheckError, retryAdminCheck } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -198,16 +198,16 @@ export function ProfileMenu() {
               </div>
               <div className="flex justify-between items-center py-2">
                 <span className="text-sm text-muted-foreground">Tipo de conta</span>
-                {isLoadingRole || isAdmin === null ? (
+                {isAdmin === null ? (
                   <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Validando…
+                    Verificando…
                   </span>
                 ) : adminCheckError ? (
                   <div className="flex items-center gap-2">
                     <span className="inline-flex items-center gap-1 text-sm text-destructive">
                       <AlertCircle className="h-3.5 w-3.5" />
-                      Erro
+                      Falha ao verificar
                     </span>
                     <button
                       type="button"
@@ -220,7 +220,7 @@ export function ProfileMenu() {
                   </div>
                 ) : (
                   <span className="text-sm font-medium">
-                    {isAdmin ? 'Administrador' : 'Usuário'}
+                    {isAdmin ? 'Administrador' : 'Empresa'}
                   </span>
                 )}
               </div>

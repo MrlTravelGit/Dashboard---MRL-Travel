@@ -30,9 +30,11 @@ const queryClient = new QueryClient({
 });
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, isLoadingRole, authReady } = useAuth();
+  const { user, isLoading, authReady } = useAuth();
 
-  if (!authReady || isLoading || isLoadingRole) {
+  // Bloqueia apenas durante bootstrap (sessão sendo recuperada).
+  // NÃO bloqueia em isLoadingRole — evita unmount de rotas durante retry de admin check.
+  if (!authReady || isLoading) {
     return <LoadingGate label="Carregando..." />;
   }
 
